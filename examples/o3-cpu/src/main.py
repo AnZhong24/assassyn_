@@ -41,8 +41,10 @@ class Execution(Module):
         depth_log: int,
         scoreboard:Array, 
         signals_array:Array,
-        offset_reg: Array, 
-        ):
+        offset_reg: Array,
+        exec_br_dest:Array,
+        exe_bypass_tail:Array,
+        sb_tail:Array):
 
        
         sb_index = self.sb_index.pop()
@@ -177,12 +179,21 @@ class Execution(Module):
  
           
         with Condition(signals.is_branch):
-            br_dest = condition[0:0].select(result, pc0)
+            exec_br_dest[0] = condition[0:0].select(result, pc0)
             execution_index = sb_index 
             log("condition: {}.a.b | a: {:08x}  | b: {:08x}   |", condition[0:0], result, pc0)
             predict_wrong = condition[0:0].select(Bits(1)(0),Bits(1)(1)) 
             predict_wrong = (signals.is_branch & (~signals.is_offset_br)&signals.link_pc).select(Bits(1)(1),predict_wrong) 
-           
+            stail = sb_tail[0]
+            bypass_tail =  (
+            (
+                sb_index.bitcast(Int(SCOREBOARD.Bit_size)) + Int(SCOREBOARD.Bit_size)(1)
+            ).bitcast(Bits(SCOREBOARD.Bit_size))
+        )
+
+            exe_bypass_tail[0] = (bypass_tail==NoDep).select(Bits(SCOREBOARD.Bit_size)(0),bypass_tail)
+
+
         with Condition(~is_memory ): 
             with Condition((rd != Bits(5)(0))):
                 exe_update = sb_index   
@@ -190,7 +201,7 @@ class Execution(Module):
                  
                  
         
-        return    br_dest,  exe_update,execution_index,ex_data,predict_wrong
+        return   exe_update,execution_index,ex_data,predict_wrong
 
 
 
@@ -257,14 +268,13 @@ class Dispatch(Downstream):
             scoreboard:Array,
             executor:Module, 
             trigger:Value, 
-            predict_wrong:Value,
-            ex_bypass: Value, 
             pc_reg: Value,
             pc_addr: Value,
             decoder: Decoder,
             data: str,
             depth_log: int, 
             sb_head:Array,
+            exec_br_dest:Array,
             sb_tail:Array,
             predicted_addr:Value, 
             is_jal:Value, 
@@ -280,17 +290,24 @@ class Dispatch(Downstream):
             fetch_addr:Value,
             d_signals:Value, 
             m_index:Value, 
-            writeback:Module):
+            writeback:Module,
+            br_jump: Array,
+            br_no_jump: Array,
+            exe_bypass_tail:Array,
+            br_signal_exe:Value,
+            ):
         
         trigger = trigger.optional(Bits(1)(0))
-        
+       
         br_signal = RegArray(UInt(32), 1  ) 
         br_flag = br_signal[0] 
-        with Condition(br_flag<UInt(32)(1)):
-            br_signal[0] = (predict_wrong.valid() | predicted_addr.valid()).select(UInt(32)(0), br_flag+UInt(32)(1) )
-         
-        predict_wrong = predict_wrong.optional(Bits(1)(0))
+        #with Condition(br_flag<UInt(32)(1)):
+        #    br_signal[0] = (exec_br_jump.valid() | predicted_addr.valid()).select(UInt(32)(0), br_flag+UInt(32)(1) )
+        br_jump[0] = br_signal_exe.optional(Bits(1)(0)) 
+        br_no_jump[0] = ~ br_jump[0]
         
+        predict_wrong = br_jump[0] & br_no_jump[0]
+
         stail = sb_tail[0]
         #Fetch Impl  
         next_index2 =   (stail.bitcast(Int(SCOREBOARD.Bit_size)) + Int(SCOREBOARD.Bit_size)(1)).bitcast(Bits(SCOREBOARD.Bit_size))
@@ -302,7 +319,7 @@ class Dispatch(Downstream):
         real_fetch =  is_not_full_scoreboard & (~is_jal) 
         
         to_fetch = predicted_addr.optional(pc_addr)
-        ex_bypass = ex_bypass.optional(to_fetch) 
+        ex_bypass = exec_br_dest[0]
         to_fetch = predict_wrong.select(ex_bypass,to_fetch) 
         icache = SRAM(width=32, depth=1<<depth_log, init_file=data)
         icache.name = 'icache'
@@ -325,14 +342,9 @@ class Dispatch(Downstream):
         
         update_tail = (update_tail==NoDep).select(Bits(SCOREBOARD.Bit_size)(0),update_tail)
 
-        bypass_tail =  (
-            (
-                (execution_index.optional(stail)).bitcast(Int(SCOREBOARD.Bit_size)) + Int(SCOREBOARD.Bit_size)(1) 
-            ).bitcast(Bits(SCOREBOARD.Bit_size)) 
-        )
-        bypass_tail = (bypass_tail==NoDep).select(Bits(SCOREBOARD.Bit_size)(0),bypass_tail)
-        
-        sb_tail[0] = predict_wrong.select( bypass_tail ,update_tail ) 
+       
+        bypass_tail = exe_bypass_tail[0]
+        sb_tail[0] = predict_wrong.select(bypass_tail,update_tail ) 
         rmt_clear_rd = rmt_clear_rd.optional(Bits(5)(0))
         rmt_up_rd = rmt_update_rd.optional(Bits(5)(0)) 
         rmt_cl_index = rmt_clear_index.optional(NoDep)
@@ -347,7 +359,7 @@ class Dispatch(Downstream):
         newest_index = cur_index.optional(NoDep)
         Fetch_addr = fetch_addr.optional(Bits(32)(0))
         de_signals = decoder_signals.view(d_signals.optional(Bits(97)(0)))
-          
+            
 
         mem_pass_index = m_index.optional(NoDep)
          
@@ -356,15 +368,16 @@ class Dispatch(Downstream):
  
         rmt_clear =  (rmt_clear_rd != Bits(5)(0)) & (RMT[rmt_clear_rd]==rmt_cl_index)
         with Condition(predict_wrong): 
-            with Condition(br_flag!=UInt(32)(0)):
-                for i in range(SCOREBOARD.size): 
+            #with Condition(br_flag==UInt(32)(1)):
+            for i in range(SCOREBOARD.size): 
+                with Condition(scoreboard['sb_valid'][i]==Bits(1)(1)): 
                     move1 = (Bits(SCOREBOARD.Bit_size)(i) <stail) & (Bits(SCOREBOARD.Bit_size)(i) >= bypass_tail)
-    
+
                     move2 = (Bits(SCOREBOARD.Bit_size)(i) >=bypass_tail) & ( (stail<bypass_tail)  )
                     move3 = ( (stail<bypass_tail) & (Bits(SCOREBOARD.Bit_size)(i) <stail) )
                     with Condition( (move1 | move2 | move3) ): 
                         scoreboard['sb_valid'][i] = Bits(1)(0) 
-                  
+              
             with Condition(rmt_clear):
                 RMT[rmt_clear_rd] = NoDep
 
@@ -510,7 +523,9 @@ def build_cpu(depth_log):
         reg_file    = RegArray(bits32, 32)
 
         reg_map_table = RegArray(Bits(SCOREBOARD.Bit_size),32,initializer=[SCOREBOARD.size]*32,attr=[Array.FULLY_PARTITIONED])
-
+        
+        
+        exe_bypass_tail =  RegArray(Bits(SCOREBOARD.Bit_size), 1, initializer=[0])
     
         scoreboard = {
             'sb_valid': RegArray(Bits(1), SCOREBOARD.init_size,initializer=[0]*SCOREBOARD.init_size,attr=[Array.FULLY_PARTITIONED]),
@@ -530,19 +545,23 @@ def build_cpu(depth_log):
         sb_head = RegArray(Bits(SCOREBOARD.Bit_size), 1, initializer=[0])
         sb_tail = RegArray(Bits(SCOREBOARD.Bit_size), 1, initializer=[0])
 
+        exec_br_jumped = RegArray(Bits(1), 1)
+        mem_br_no_jump = RegArray(Bits(1), 1)
+        exec_br_dest = RegArray(bits32, 1)
 
         csr_file = RegArray(Bits(32), 16, initializer=[0]*16)
 
 
         writeback = WriteBack()
         rmt_clear_rd,rmt_clear_index= writeback.build(reg_file = reg_file , scoreboard=scoreboard,sb_head=sb_head,  signals_array = signals_array )
+        
  
         memory_access = MemoryAccess()
 
         executor = Execution()
         
         
-        ex_bypass,   exe_update,execution_index,ex_data,predict_wrong = executor.build( 
+        exe_update,execution_index,ex_data,br_signal_exe = executor.build( 
             rf = reg_file,
             csr_f = csr_file,
             memory = memory_access, 
@@ -550,9 +569,11 @@ def build_cpu(depth_log):
             depth_log = depth_log,
             scoreboard=scoreboard, 
             offset_reg = offset_reg,
-            signals_array=signals_array
+            signals_array=signals_array,
+            exec_br_dest=exec_br_dest,
+            exe_bypass_tail=exe_bypass_tail,
+            sb_tail=sb_tail,
             )
-        
         
         m_index = memory_access.build( 
             scoreboard=scoreboard,  
@@ -569,13 +590,15 @@ def build_cpu(depth_log):
         rmt_update_rd,decode_index,decode_fetch_addr,decode_signals,predicted_addr,is_jal= decoder.build( sb_tail=sb_tail )
 
         dispatch.build(executor=executor,scoreboard=scoreboard,trigger=cycle_activate, \
-             predict_wrong=predict_wrong ,ex_bypass = ex_bypass, pc_reg = pc_reg, pc_addr =pc_addr, decoder =decoder, data=f'{workspace}/workload.exe',depth_log= depth_log, \
+              pc_reg = pc_reg, pc_addr =pc_addr, decoder =decoder, data=f'{workspace}/workload.exe',depth_log= depth_log, \
                             sb_head = sb_head, sb_tail=sb_tail,predicted_addr = predicted_addr,is_jal =is_jal , \
             exe_pass_id=exe_update , RMT=reg_map_table,execution_index=execution_index , \
             rmt_clear_rd=rmt_clear_rd,rmt_clear_index=rmt_clear_index,\
                 rmt_update_rd=rmt_update_rd, ex_data = ex_data, \
                       cur_index=decode_index, fetch_addr=decode_fetch_addr,d_signals=decode_signals, \
-                        m_index=m_index,signals_array=signals_array,writeback = writeback )
+                        m_index=m_index,signals_array=signals_array,writeback = writeback , br_jump= exec_br_jumped , 
+                         br_no_jump= mem_br_no_jump,exec_br_dest=exec_br_dest,exe_bypass_tail=exe_bypass_tail,
+                         br_signal_exe=br_signal_exe)
          
         
         driver = Driver()

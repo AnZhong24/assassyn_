@@ -19,7 +19,7 @@ class MemoryAccess(Module):
         self.timing = 'systolic'
           
         index = self.index.pop() 
-        with Condition( scoreboard['sb_status'][index] != Bits(2)(3) ):
+        with Condition( (scoreboard['sb_status'][index] != Bits(2)(3))&( scoreboard['sb_valid'][index] ) ):
             with Condition(self.rdata.valid()):
                 mdata = self.rdata.pop()
                 scoreboard['mdata'][index] = mdata
