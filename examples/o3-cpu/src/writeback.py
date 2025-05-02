@@ -10,7 +10,7 @@ class WriteBack(Module):
         self.name = 'W'
 
     @module.combinational
-    def build(self, reg_file: Array ,scoreboard:Array, sb_head:Array,  signals_array:Array):
+    def build(self, reg_file: Array ,scoreboard:Array, sb_head:Array,  signals_array:Array,counter:Array):
          
         s_head = sb_head[0]  
         wait_until(scoreboard['sb_status'][s_head]==Bits(2)(3))
@@ -35,7 +35,15 @@ class WriteBack(Module):
          
         scoreboard['sb_valid'][s_head] = Bits(1)(0)
         scoreboard['sb_status'][s_head] = Bits(2)(0)
-         
+        entry_time = scoreboard['entry_cycle'][s_head]
+
+        total_latency = counter[0] - entry_time
+
+        log("PROFILE:  PC=0x{:08x} | Total={} cycles | status  {} ",
+                    scoreboard['fetch_addr'][s_head], total_latency ,scoreboard['sb_status'][s_head])
+ 
+
+
         bypass_head = (
                 (s_head.bitcast(Int(SCOREBOARD.Bit_size)) + Int(SCOREBOARD.Bit_size)(1) 
             ).bitcast(Bits(SCOREBOARD.Bit_size)) 

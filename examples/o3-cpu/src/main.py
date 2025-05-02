@@ -295,6 +295,7 @@ class Dispatch(Downstream):
             br_no_jump: Array,
             exe_bypass_tail:Array,
             br_signal_exe:Value,
+            counter:Array
             ):
         
         trigger = trigger.optional(Bits(1)(0))
@@ -315,9 +316,10 @@ class Dispatch(Downstream):
         
         shead = sb_head[0]
         is_not_full_scoreboard = ( (next_index2 != shead)) | (~scoreboard['sb_valid'][shead]) 
+#        is_not_full_scoreboard = shead!=stail
         is_jal = is_jal.optional(Bits(1)(0))
         real_fetch =  is_not_full_scoreboard & (~is_jal) 
-        
+        log("head {} tail {}  real_fetch {} is_jal {}",shead,stail,real_fetch,is_jal)        
         to_fetch = predicted_addr.optional(pc_addr)
         ex_bypass = exec_br_dest[0]
         to_fetch = predict_wrong.select(ex_bypass,to_fetch) 
@@ -363,21 +365,34 @@ class Dispatch(Downstream):
 
         mem_pass_index = m_index.optional(NoDep)
          
-         
+        for i in range(SCOREBOARD.size): 
+            log("index {}  valid {}  status {}",Bits(SCOREBOARD.Bit_size)(i), scoreboard['sb_valid'][i],scoreboard['sb_status'][i])
+
         writeback.async_called()
  
         rmt_clear =  (rmt_clear_rd != Bits(5)(0)) & (RMT[rmt_clear_rd]==rmt_cl_index)
+        counter[0] = counter[0] + UInt(32)(1)
+
         with Condition(predict_wrong): 
+            log("NOISSUE pwrong")
             #with Condition(br_flag==UInt(32)(1)):
             for i in range(SCOREBOARD.size): 
-                with Condition(scoreboard['sb_valid'][i]==Bits(1)(1)): 
+                with Condition( (scoreboard['sb_valid'][i]==Bits(1)(1)) & ( Bits(SCOREBOARD.Bit_size)(i) != shead ) ): 
                     move1 = (Bits(SCOREBOARD.Bit_size)(i) <stail) & (Bits(SCOREBOARD.Bit_size)(i) >= bypass_tail)
 
                     move2 = (Bits(SCOREBOARD.Bit_size)(i) >=bypass_tail) & ( (stail<bypass_tail)  )
                     move3 = ( (stail<bypass_tail) & (Bits(SCOREBOARD.Bit_size)(i) <stail) )
                     with Condition( (move1 | move2 | move3) ): 
                         scoreboard['sb_valid'][i] = Bits(1)(0) 
-              
+                        entry_time = scoreboard['entry_cycle'][i]
+
+                        total_latency = counter[0] - entry_time
+
+
+
+                        log("PROFILE:  PC=0x{:08x} | Total_Wrong={} cycles | status  {} ",
+                            scoreboard['fetch_addr'][i], total_latency ,scoreboard['sb_status'][i])
+                   
             with Condition(rmt_clear):
                 RMT[rmt_clear_rd] = NoDep
 
@@ -429,13 +444,16 @@ class Dispatch(Downstream):
              
             with Condition(valid_global ): 
                 scoreboard['sb_status'][d_id] = Bits(2)(1) 
-                
+                scoreboard['entry_cycle'][d_id] = counter[0]
+                log("INDIRECT")
                 call = executor.async_called(
                     sb_index=d_id 
                 )
 
                 call.bind.set_fifo_depth()
         
+            with Condition(newest_index== NoDep):
+                log("NOISSUE")
 
             with Condition(newest_index!=NoDep): 
                 
@@ -453,6 +471,8 @@ class Dispatch(Downstream):
                 exe_dispatch_valid =  (~valid_global)&(rs1_ready & rs2_ready )
                 scoreboard['sb_valid'][newest_index] = Bits(1)(1) 
                 
+                with Condition(( ~exe_dispatch_valid) & ( (~valid_global) )  ):
+                    log("NoDispatch")
                 scoreboard['rs1_ready'][newest_index] = rs1_ready
                 scoreboard['rs2_ready'][newest_index] = rs2_ready
  
@@ -463,7 +483,9 @@ class Dispatch(Downstream):
                 scoreboard['sb_status'][newest_index] = exe_dispatch_valid.select( Bits(2)(1), Bits(2)(0))
 
                 with Condition(exe_dispatch_valid ):  
-                    
+                    scoreboard['entry_cycle'][newest_index] = counter[0]
+
+                    log("DIRECT") 
                     call = executor.async_called( sb_index=newest_index )
                     
                     call.bind.set_fifo_depth()   
@@ -502,7 +524,17 @@ class Driver(Module):
         with Condition(init_reg[0] == UInt(1)(0)):
             
             d_call = fetcher.async_called()
-         
+        
+
+def enhance_scoreboard_with_profiling(scoreboard):
+    """Add profiling fields to the scoreboard structure"""
+    scoreboard.update({
+        # Timestamp when instruction enters the scoreboard
+        'entry_cycle': RegArray(UInt(32), SCOREBOARD.init_size, initializer=[0]*SCOREBOARD.init_size),
+    })
+    return scoreboard
+
+
 
 def build_cpu(depth_log):
     sys = SysBuilder('o3_cpu')
@@ -518,6 +550,7 @@ def build_cpu(depth_log):
         fetcher = Fetcher()
         pc_reg, pc_addr ,cycle_activate= fetcher.build()
  
+        counter = RegArray(UInt(32),1)
 
         # Data Structures
         reg_file    = RegArray(bits32, 32)
@@ -540,6 +573,8 @@ def build_cpu(depth_log):
             'fetch_addr': RegArray(Bits(32), SCOREBOARD.init_size,initializer=[0]*SCOREBOARD.init_size ), 
             'mdata': RegArray(Bits(32), SCOREBOARD.init_size,initializer=[0]*SCOREBOARD.init_size ) 
         }
+        scoreboard = enhance_scoreboard_with_profiling(scoreboard)
+
 
         signals_array = RegArray(decoder_signals, SCOREBOARD.init_size,initializer=[0]*SCOREBOARD.init_size )
         sb_head = RegArray(Bits(SCOREBOARD.Bit_size), 1, initializer=[0])
@@ -553,7 +588,7 @@ def build_cpu(depth_log):
 
 
         writeback = WriteBack()
-        rmt_clear_rd,rmt_clear_index= writeback.build(reg_file = reg_file , scoreboard=scoreboard,sb_head=sb_head,  signals_array = signals_array )
+        rmt_clear_rd,rmt_clear_index= writeback.build(reg_file = reg_file , scoreboard=scoreboard,sb_head=sb_head,  signals_array = signals_array,counter=counter )
         
  
         memory_access = MemoryAccess()
@@ -598,7 +633,7 @@ def build_cpu(depth_log):
                       cur_index=decode_index, fetch_addr=decode_fetch_addr,d_signals=decode_signals, \
                         m_index=m_index,signals_array=signals_array,writeback = writeback , br_jump= exec_br_jumped , 
                          br_no_jump= mem_br_no_jump,exec_br_dest=exec_br_dest,exe_bypass_tail=exe_bypass_tail,
-                         br_signal_exe=br_signal_exe)
+                         br_signal_exe=br_signal_exe,counter=counter)
          
         
         driver = Driver()
