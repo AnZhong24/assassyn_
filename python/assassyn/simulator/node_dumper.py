@@ -1,9 +1,7 @@
 """Node reference dumper for simulator code generation."""
 
-from assassyn.visitor import Visitor
-from assassyn.expr.intrinsic import PureIntrinsic
-from assassyn.expr.subcode import Cast
-from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
+from ..visitor import Visitor
+from .utils import namify, int_imm_dumper_impl, fifo_name
 
 
 def dump_rval_ref(module_ctx, sys, node):

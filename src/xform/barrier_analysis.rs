@@ -215,7 +215,7 @@ impl DependencyGraph {
     //self.expr_hashmap.entry(child);
   }
 
-  pub fn gather_submodules(&mut self, sys: &SysBuilder) {
+  pub fn gather_submodules(&mut self, _sys: &SysBuilder) {
     #[allow(clippy::too_many_arguments)]
     fn dfs(
       graph: &Vec<NodeData>,
@@ -742,7 +742,7 @@ impl<'a> CutModules<'a> {
   }
 
   //#TODO(@derui) add the check for the expr is valid for remapping
-  pub fn is_expr_valid(&self, node_map: &HashMap<usize, BaseNode>, expr: &ExprRef) -> bool {
+  pub fn is_expr_valid(&self, _node_map: &HashMap<usize, BaseNode>, _expr: &ExprRef) -> bool {
     true
   }
 
@@ -764,7 +764,7 @@ impl<'a> CutModules<'a> {
       sub_module_order_rev.sort_by_key(|(k, _)| *k);
 
       //remove the barrier expr
-      for (key, basenode) in container.sub_module_image.barrier_expr.iter() {
+      for (_, basenode) in container.sub_module_image.barrier_expr.iter() {
         //#TODO(@derui) need to do remove here
         basenode
           .as_mut::<Expr>(self.sys)
@@ -1060,7 +1060,7 @@ impl<'a> CutModules<'a> {
               let mut need_change_parent = false;
               if parent_key != root_block_key {
                 need_change_parent = true;
-                if let std::collections::hash_map::Entry::Vacant(e) =
+                if let std::collections::hash_map::Entry::Vacant(_) =
                   block_remapping_map.entry(parent_key)
                 {
                   //#TODO(@derui) need to think about the case that the child is also a block
@@ -1136,7 +1136,7 @@ impl<'a> CutModules<'a> {
             let mut bind_expr_map: Vec<_> = container.sub_module_image.caller_expr.iter().collect();
             bind_expr_map.sort_by_key(|(key, _value)| *key);
             bind_expr_map.reverse();
-            for (k, node) in bind_expr_map {
+            for (_, node) in bind_expr_map {
               println!("erase_from_parent: {:?}", node);
               node.as_mut::<Expr>(self.sys).unwrap().erase_from_parent();
             }

@@ -1,6 +1,5 @@
 """Runtime code generation for Assassyn simulator."""
 
-from assassyn.dtype import DType
 
 
 def dump_runtime(fd):

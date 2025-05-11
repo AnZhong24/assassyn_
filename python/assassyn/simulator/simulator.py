@@ -2,10 +2,6 @@
 
 import os
 from collections import defaultdict
-import itertools
-from assassyn.module import Module
-from assassyn.builder import SysBuilder
-from assassyn.expr.subcode import PureIntrinsic
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
 

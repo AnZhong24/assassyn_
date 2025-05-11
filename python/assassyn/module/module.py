@@ -7,7 +7,7 @@ from decorator import decorator
 
 from ..builder import Singleton, ir_builder
 from ..block import Block
-from ..expr import Bind, FIFOPop, PureInstrinsic, FIFOPush, AsyncCall
+from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall
 from ..expr.intrinsic import wait_until
 from .base import ModuleBase
 
@@ -172,12 +172,12 @@ class Port:
     @ir_builder
     def valid(self):
         '''The frontend API for creating a FIFO.valid operation.'''
-        return PureInstrinsic(PureInstrinsic.FIFO_VALID, self)
+        return PureIntrinsic(PureIntrinsic.FIFO_VALID, self)
 
     @ir_builder
     def peek(self):
         '''The frontend API for creating a FIFO.peek operation.'''
-        return PureInstrinsic(PureInstrinsic.FIFO_PEEK, self)
+        return PureIntrinsic(PureIntrinsic.FIFO_PEEK, self)
 
     @ir_builder
     def pop(self):

@@ -40,7 +40,7 @@ class Expr(Value):
 
     def is_valued(self):
         '''If this operation has a return value'''
-        valued = (PureInstrinsic, FIFOPop, ArrayRead, Slice, Cast, Concat, Select, Select1Hot)
+        valued = (PureIntrinsic, FIFOPop, ArrayRead, Slice, Cast, Concat, Select, Select1Hot)
         other = isinstance(self, valued)
         return other or self.is_binary() or self.is_unary()
 
@@ -292,7 +292,7 @@ class UnaryOp(Expr):
     def __repr__(self):
         return f'{self.as_operand()} = {self.OPERATORS[self.opcode]}{self.x.as_operand()}'
 
-class PureInstrinsic(Expr):
+class PureIntrinsic(Expr):
     '''The class for accessing FIFO fields, valid, and peek'''
 
     args: list  # Arguments to the intrinsic operation
@@ -315,14 +315,14 @@ class PureInstrinsic(Expr):
         self.args = list(args)
 
     def __repr__(self):
-        if self.opcode in [PureInstrinsic.FIFO_PEEK, PureInstrinsic.FIFO_VALID,
-                           PureInstrinsic.MODULE_TRIGGERED, PureInstrinsic.VALUE_VALID]:
+        if self.opcode in [PureIntrinsic.FIFO_PEEK, PureIntrinsic.FIFO_VALID,
+                           PureIntrinsic.MODULE_TRIGGERED, PureIntrinsic.VALUE_VALID]:
             fifo = self.args[0].as_operand()
             return f'{self.as_operand()} = {fifo}.{self.OPERATORS[self.opcode]}()'
         raise NotImplementedError
 
     def __getattr__(self, name):
-        if self.opcode == PureInstrinsic.FIFO_PEEK:
+        if self.opcode == PureIntrinsic.FIFO_PEEK:
             port = self.args[0]
             # pylint: disable=import-outside-toplevel
             from ..module import Port

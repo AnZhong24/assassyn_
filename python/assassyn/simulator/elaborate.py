@@ -4,7 +4,6 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from assassyn.builder import SysBuilder
 from .modules import ElaborateModule
 from .simulator import dump_simulator, dump_main
 from .runtime import dump_runtime

@@ -1,8 +1,24 @@
 """Module elaboration for simulator code generation."""
 
-from assassyn.visitor import Visitor
-from assassyn.block import Block
-from assassyn.expr.subcode import Binary, PureIntrinsic, BlockIntrinsic, Cast
+from ..visitor import Visitor
+from ..expr import (
+        Expr,
+        BinaryOp,
+        UnaryOp,
+        ArrayRead,
+        ArrayWrite,
+        Cast,
+        PureIntrinsic,
+        Bind,
+        AsyncCall,
+        FIFOPop,
+        FIFOPush,
+        Log,
+        Select,
+        Select1Hot,
+        Slice,
+        Concat,
+)
 from .utils import namify, dtype_to_rust_type, fifo_name
 from .node_dumper import dump_rval_ref, externally_used_combinational
 
@@ -55,46 +71,36 @@ class ElaborateModule(Visitor):
         open_scope = False
         code = []
 
-        if expr.get_opcode() == "Binary":
+        if isinstance(expr, BinaryOp):
             binary = expr.as_sub_binary()
-            binop = binary.get_binop()
-            ty = binary.dtype()
+            binop = BinaryOp.OPERATORS[expr.opcode]
             rust_ty = dtype_to_rust_type(ty)
-
             lhs = dump_rval_ref(self.module_ctx, self.sys, binary.a())
-
+            rhs = dump_rval_ref(self.module_ctx, self.sys, binary.b())
             # Special handling for shift operations
             if binop in [Binary.SHL, Binary.SHR]:
-                rhs = f"ValueCastTo::<u64>::cast(&{dump_rval_ref(self.module_ctx, self.sys, binary.b())})"
+                rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
             else:
-                rhs = f"ValueCastTo::<{rust_ty}>::cast(&{dump_rval_ref(self.module_ctx, self.sys, binary.b())})"
+                rhs = f"ValueCastTo::<{rust_ty}>::cast(&{rhs})"
 
-            code.append(f"{lhs} {binary.get_opcode()} {rhs}")
+            code.append(f"{lhs} {binop} {rhs}")
 
-        elif expr.get_opcode() == "Unary":
-            unary = expr.as_sub_unary()
+        elif isinstance(expr, UnaryOp):
+            unary = expr.opcode
             operand = dump_rval_ref(self.module_ctx, self.sys, unary.x())
             code.append(f"{unary.get_opcode()}{operand}")
 
-        elif expr.get_opcode() == "Compare":
-            compare = expr.as_sub_compare()
-            lhs = dump_rval_ref(self.module_ctx, self.sys, compare.a())
-            rhs = dump_rval_ref(self.module_ctx, self.sys, compare.b())
-            code.append(f"{lhs} {compare.get_opcode()} {rhs}")
-
-        elif expr.get_opcode() == "Load":
-            load = expr.as_sub_load()
-            array = load.array()
-            idx = load.idx()
+        elif isinstance(expr, ArrayRead):
+            array = expr.arr
+            idx = expr.idx
             array_name = namify(array.get_name())
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
             code.append(f"sim.{array_name}.payload[{idx_val} as usize].clone()")
 
-        elif expr.get_opcode() == "Store":
-            store = expr.as_sub_store()
-            array = store.array()
-            idx = store.idx()
-            value = store.value()
+        elif isinstance(expr, ArrayWrite):
+            array = store.arr
+            idx = store.idx
+            value = store.value
 
             array_name = namify(array.get_name())
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
@@ -107,19 +113,19 @@ class ElaborateModule(Visitor):
                 ArrayWrite::new(stamp, {idx_val} as usize, {value_val}.clone(), "{module_writer}"));
             }}""")
 
-        elif expr.get_opcode() == "AsyncCall":
-            call = expr.as_sub_async_call()
-            bind = call.bind()
-            event_q = f"{namify(bind.callee().get_name())}_event"
+        elif isinstance(expr, AsyncCall):
+
+            bind = expr.bind
+
+            event_q = f"{namify(bind.callee.get_name())}_event"
 
             code.append(f"""{{
               let stamp = sim.stamp - sim.stamp % 100 + 100;
               sim.{event_q}.push_back(stamp)
             }}""")
 
-        elif expr.get_opcode() == "FIFOPop":
-            pop = expr.as_sub_fifo_pop()
-            fifo = pop.fifo()
+        elif isinstance(expr, FIFOPop):
+            fifo = expr.fifo
             fifo_id = fifo_name(fifo)
             module_name = self.module_name
 
@@ -129,9 +135,9 @@ class ElaborateModule(Visitor):
               sim.{fifo_id}.payload.front().unwrap().clone()
             }}""")
 
-        elif expr.get_opcode() == "PureIntrinsic":
-            call = expr.as_sub_intrinsic()
-            intrinsic = call.get_subcode()
+        elif isinstance(expr, PureIntrinsic):
+
+            intrinsic = expr.opcode
 
             if intrinsic == PureIntrinsic.FIFO_PEEK:
                 port_self = dump_rval_ref(self.module_ctx, self.sys, call.get_operand_value(0))
@@ -150,7 +156,7 @@ class ElaborateModule(Visitor):
                 port_self = dump_rval_ref(self.module_ctx, self.sys, call.get_operand_value(0))
                 code.append(f"sim.{port_self}_triggered")
 
-        elif expr.get_opcode() == "FIFOPush":
+        elif isinstance(expr, FIFOPush):
             push = expr.as_sub_fifo_push()
             fifo = push.fifo()
             fifo_id = fifo_name(fifo)
@@ -164,7 +170,8 @@ class ElaborateModule(Visitor):
             }}""")
 
         elif expr.get_opcode() == "Log":
-            result = [f'print!("@line:{{:<5}} {{:<10}}: [{self.module_name}]\\t", line!(), cyclize(sim.stamp));']
+            mn = self.module_name
+            result = [f'print!("@line:{{:<5}} {{:<10}}: [{mn}]\\t", line!(), cyclize(sim.stamp));']
             result.append("println!(")
 
             for elem in expr.operand_iter():
@@ -248,36 +255,36 @@ class ElaborateModule(Visitor):
         elif expr.get_opcode() == "Bind":
             code.append("()")
 
-        elif expr.get_opcode() == "BlockIntrinsic":
-            bi = expr.as_sub_block_intrinsic()
-            intrinsic = bi.get_subcode()
+        # elif expr.get_opcode() == "BlockIntrinsic":
+        #     bi = expr.as_sub_block_intrinsic()
+        #     intrinsic = bi.get_subcode()
 
-            value = ""
-            if bi.value():
-                value = dump_rval_ref(self.module_ctx, self.sys, bi.value())
+        #     value = ""
+        #     if bi.value():
+        #         value = dump_rval_ref(self.module_ctx, self.sys, bi.value())
 
-            if intrinsic == BlockIntrinsic.VALUE:
-                code.append(value)
+        #     if intrinsic == BlockIntrinsic.VALUE:
+        #         code.append(value)
 
-            elif intrinsic == BlockIntrinsic.CYCLED:
-                open_scope = True
-                code.append(f"if sim.stamp / 100 == ({value} as usize) {{")
+        #     elif intrinsic == BlockIntrinsic.CYCLED:
+        #         open_scope = True
+        #         code.append(f"if sim.stamp / 100 == ({value} as usize) {{")
 
-            elif intrinsic == BlockIntrinsic.WAIT_UNTIL:
-                code.append(f"if !{value} {{ return false; }}")
+        #     elif intrinsic == BlockIntrinsic.WAIT_UNTIL:
+        #         code.append(f"if !{value} {{ return false; }}")
 
-            elif intrinsic == BlockIntrinsic.CONDITION:
-                open_scope = True
-                code.append(f"if {value} {{")
+        #     elif intrinsic == BlockIntrinsic.CONDITION:
+        #         open_scope = True
+        #         code.append(f"if {value} {{")
 
-            elif intrinsic == BlockIntrinsic.FINISH:
-                code.append("std::process::exit(0);")
+        #     elif intrinsic == BlockIntrinsic.FINISH:
+        #         code.append("std::process::exit(0);")
 
-            elif intrinsic == BlockIntrinsic.ASSERT:
-                code.append(f"assert!({value});")
+        #     elif intrinsic == BlockIntrinsic.ASSERT:
+        #         code.append(f"assert!({value});")
 
-            elif intrinsic == BlockIntrinsic.BARRIER:
-                code.append(f"/* Barrier: {value} */")
+        #     elif intrinsic == BlockIntrinsic.BARRIER:
+        #         code.append(f"/* Barrier: {value} */")
 
         # Format the result with proper indentation and variable assignment
         indent_str = " " * self.indent

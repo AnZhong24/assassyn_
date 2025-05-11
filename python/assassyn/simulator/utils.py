@@ -30,6 +30,7 @@ def camelize(name: str) -> str:
 
 
 def dtype_to_rust_type(dtype: DType) -> str:
+    # disable=too-many-return-statements
     """Convert an Assassyn data type to a Rust type.
 
     This matches the Rust function in src/backend/simulator/utils.rs

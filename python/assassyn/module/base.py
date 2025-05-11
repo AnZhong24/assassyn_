@@ -1,7 +1,7 @@
 '''The base class for the module definition.'''
 from ..utils import identifierize
 from ..builder import ir_builder
-from ..expr import PureInstrinsic
+from ..expr import PureIntrinsic
 
 
 # pylint: disable=too-few-public-methods
@@ -21,4 +21,4 @@ class ModuleBase:
         '''The frontend API for creating a triggered node,
         which checks if this module is triggered this cycle.
         NOTE: This operation is only usable in downstream modules.'''
-        return PureInstrinsic(PureInstrinsic.MODULE_TRIGGERED, self)
+        return PureIntrinsic(PureIntrinsic.MODULE_TRIGGERED, self)

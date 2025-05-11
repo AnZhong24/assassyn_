@@ -41,10 +41,10 @@ CG_OPCODE = {
     expr.Slice.SLICE: 'slice',
     expr.Concat.CONCAT: 'concat',
 
-    expr.PureInstrinsic.FIFO_PEEK: 'peek',
-    expr.PureInstrinsic.FIFO_VALID: 'valid',
-    expr.PureInstrinsic.MODULE_TRIGGERED: 'module_triggered',
-    expr.PureInstrinsic.VALUE_VALID: 'value_valid',
+    expr.PureIntrinsic.FIFO_PEEK: 'peek',
+    expr.PureIntrinsic.FIFO_VALID: 'valid',
+    expr.PureIntrinsic.MODULE_TRIGGERED: 'module_triggered',
+    expr.PureIntrinsic.VALUE_VALID: 'value_valid',
 
     expr.FIFOPop.FIFO_POP: 'pop',
     expr.FIFOPush.FIFO_PUSH: 'push',
@@ -72,8 +72,8 @@ CG_OPCODE = {
 CG_MIDFIX = {
     expr.FIFOPop.FIFO_POP: 'fifo',
     expr.FIFOPush.FIFO_PUSH: 'fifo',
-    expr.PureInstrinsic.FIFO_PEEK: 'fifo',
-    expr.PureInstrinsic.FIFO_VALID: 'fifo',
+    expr.PureIntrinsic.FIFO_PEEK: 'fifo',
+    expr.PureIntrinsic.FIFO_VALID: 'fifo',
 }
 
 CG_SIMULATOR = {
@@ -364,7 +364,7 @@ class CodeGen(visitor.Visitor):
         elif node.is_unary():
             x = self.generate_rval(node.x)
             res = f'sys.{ib_method}({x});'
-        elif isinstance(node, expr.PureInstrinsic):
+        elif isinstance(node, expr.PureIntrinsic):
             if len(node.args) == 1:
                 master = self.generate_rval(node.args[0])
                 res = f'sys.{ib_method}({master});'
