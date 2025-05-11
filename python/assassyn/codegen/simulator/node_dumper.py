@@ -1,86 +1,73 @@
 """Node reference dumper for simulator code generation."""
 
-from ..visitor import Visitor
+from ...visitor import Visitor
 from .utils import namify, int_imm_dumper_impl, fifo_name
+from ...expr import (
+    Expr,
+    PureIntrinsic,
+    Array,
+)
+from ...array import Array
 
 
 def dump_rval_ref(module_ctx, sys, node):
-    """Dump a reference to a node as an rvalue.
+    """Dispatch to appropriate handler based on node kind."""
+    node_kind = node.get_kind()
 
-    This matches the Rust function in src/backend/simulator/elaborate.rs
-    """
-    return NodeRefDumper(module_ctx).dispatch(sys, node, [])
+    if isinstance(node, Array):
+        return namify(node.get_name())
 
+    if isinstance(node, FIFO):
+        fifo = node.as_fifo()
+        return fifo_name(fifo)
 
-class NodeRefDumper(Visitor):
-    """Visitor for dumping node references.
+    if isinstance(node, IntImm):
+        int_imm = node.as_int_imm()
+        return int_imm_dumper_impl(int_imm.dtype(), int_imm.get_value())
 
-    This matches the Rust class in src/backend/simulator/elaborate.rs
-    """
+    if isinstance(node, StrImm):
+        str_imm = node.as_str_imm()
+        value = str_imm.get_value()
+        # Using Python's repr to get quote-escaped string
+        return repr(value)
 
-    def __init__(self, module_ctx):
-        """Initialize the node reference dumper."""
-        self.module_ctx = module_ctx
+    if isinstance(node, Module):
+        module = node.as_module()
+        return namify(module.get_name())
 
-    def dispatch(self, sys, node, _):
-        """Dispatch to appropriate handler based on node kind."""
-        node_kind = node.get_kind()
+    if isinstance(node, Expr):
+        expr = node.as_expr()
 
-        if node_kind == "Array":
-            array = node.as_array()
-            return namify(array.get_name())
-
-        elif node_kind == "FIFO":
-            fifo = node.as_fifo()
-            return fifo_name(fifo)
-
-        elif node_kind == "IntImm":
-            int_imm = node.as_int_imm()
-            return int_imm_dumper_impl(int_imm.dtype(), int_imm.get_value())
-
-        elif node_kind == "StrImm":
-            str_imm = node.as_str_imm()
-            value = str_imm.get_value()
-            # Using Python's repr to get quote-escaped string
-            return repr(value)
-
-        elif node_kind == "Module":
-            module = node.as_module()
-            return namify(module.get_name())
-
-        elif node_kind == "Expr":
-            expr = node.as_expr()
-
-            # Figure out the ID format based on context
-            parent_block = expr.get_parent().as_block()
-            if self.module_ctx != parent_block.get_module():
-                # Expression from another module
-                raw = namify(expr.get_name())
-                field_id = f"{raw}_value"
-                panic_log = f"Value {raw} invalid!"
-                return f"""if let Some(x) = &sim.{field_id} {{
-                            x
-                          }} else {{
-                            panic!("{panic_log}");
-                          }}.clone()"""
-            elif expr.dtype().get_bits() <= 64:
-                # Simple value
-                return namify(expr.get_name())
-            else:
-                # Large value needs cloning
-                return f"{namify(expr.get_name())}.clone()"
-
-            # Handle FIFO peek special case
-            if expr.as_sub_expr_type() == PureIntrinsic and expr.get_subcode() == "FIFOPeek":
-                id = namify(expr.get_name())
-                id += ".clone().unwrap()"
-                return id
-
+        # Figure out the ID format based on context
+        parent_block = expr.get_parent().as_block()
+        if self.module_ctx != parent_block.get_module():
+            # Expression from another module
+            raw = namify(expr.get_name())
+            field_id = f"{raw}_value"
+            panic_log = f"Value {raw} invalid!"
+            return f"""if let Some(x) = &sim.{field_id} {{
+                        x
+                      }} else {{
+                        panic!("{panic_log}");
+                      }}.clone()"""
+        elif expr.dtype().get_bits() <= 64:
+            # Simple value
             return namify(expr.get_name())
-
         else:
-            # Default case
-            return namify(node.to_string())
+            # Large value needs cloning
+            return f"{namify(expr.get_name())}.clone()"
+
+        # Handle FIFO peek special case
+        if expr.as_sub_expr_type() == PureIntrinsic and expr.get_subcode() == "FIFOPeek":
+            id = namify(expr.get_name())
+            id += ".clone().unwrap()"
+            return id
+
+        return namify(expr.get_name())
+
+    else:
+        # Default case
+        return namify(node.to_string())
 
 
 def externally_used_combinational(expr):

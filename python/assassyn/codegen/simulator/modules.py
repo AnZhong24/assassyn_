@@ -79,7 +79,7 @@ class ElaborateModule(Visitor):
             lhs = dump_rval_ref(self.module_ctx, self.sys, binary.a())
             rhs = dump_rval_ref(self.module_ctx, self.sys, binary.b())
             # Special handling for shift operations
-            if binop in [Binary.SHL, Binary.SHR]:
+            if binop in [BinaryOp.SHL, BinaryOp.SHR]:
                 rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
             else:
                 rhs = f"ValueCastTo::<{rust_ty}>::cast(&{rhs})"
@@ -199,7 +199,7 @@ class ElaborateModule(Visitor):
                                let mask = u64::from_str_radix("{mask_bits}", 2).unwrap();'''
             else:
                 result_a = f'''let a = ValueCastTo::<BigUint>::cast(&{a});
-                               let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
+let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
 
             code.append(f"""{{
                 {result_a}
@@ -233,13 +233,15 @@ class ElaborateModule(Visitor):
             select1hot = expr.as_sub_select1hot()
             cond = dump_rval_ref(self.module_ctx, self.sys, select1hot.cond())
 
-            result = [f"{{ let cond = {cond}; assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");"]
+            result = [f'''{{ let cond = {cond};
+assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
             for i, value in enumerate(select1hot.value_iter()):
                 if i != 0:
                     result.append(" else ")
 
-                result.append(f"if cond >> {i} & 1 != 0 {{ {dump_rval_ref(self.module_ctx, self.sys, value)} }}")
+                result.append(f'''if cond >> {i} & 1 != 0
+{{ {dump_rval_ref(self.module_ctx, self.sys, value)} }}''')
 
             result.append(" else { unreachable!() } }")
             code.append("".join(result))
