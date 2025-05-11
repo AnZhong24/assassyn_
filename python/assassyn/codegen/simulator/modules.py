@@ -1,13 +1,14 @@
 """Module elaboration for simulator code generation."""
 
-from ..visitor import Visitor
-from ..expr import (
+from ...visitor import Visitor
+from ...expr import (
         Expr,
         BinaryOp,
         UnaryOp,
         ArrayRead,
         ArrayWrite,
         Cast,
+        Intrinsic,
         PureIntrinsic,
         Bind,
         AsyncCall,
@@ -157,10 +158,9 @@ class ElaborateModule(Visitor):
                 code.append(f"sim.{port_self}_triggered")
 
         elif isinstance(expr, FIFOPush):
-            push = expr.as_sub_fifo_push()
-            fifo = push.fifo()
+            fifo = expr.fifo
             fifo_id = fifo_name(fifo)
-            value = dump_rval_ref(self.module_ctx, self.sys, push.value())
+            value = dump_rval_ref(self.module_ctx, self.sys, expr.value)
             module_writer = self.module_name
 
             code.append(f"""{{
@@ -169,7 +169,7 @@ class ElaborateModule(Visitor):
                 FIFOPush::new(stamp + 50, {value}.clone(), "{module_writer}"));
             }}""")
 
-        elif expr.get_opcode() == "Log":
+        elif isinstance(expr, Log):
             mn = self.module_name
             result = [f'print!("@line:{{:<5}} {{:<10}}: [{mn}]\\t", line!(), cyclize(sim.stamp));']
             result.append("println!(")
@@ -186,7 +186,7 @@ class ElaborateModule(Visitor):
             result.append(")")
             code.append("".join(result))
 
-        elif expr.get_opcode() == "Slice":
+        elif isinstance(expr, Slice):
             slice_expr = expr.as_sub_slice()
             a = dump_rval_ref(self.module_ctx, self.sys, slice_expr.x())
             l = slice_expr.l()
@@ -207,7 +207,7 @@ class ElaborateModule(Visitor):
                 ValueCastTo::<{dtype_to_rust_type(dtype)}>::cast(&res)
             }}""")
 
-        elif expr.get_opcode() == "Concat":
+        elif isinstance(expr, Concat):
             concat = expr.as_sub_concat()
             dtype = expr.dtype()
             a = dump_rval_ref(self.module_ctx, self.sys, concat.msb())
@@ -221,7 +221,7 @@ class ElaborateModule(Visitor):
                 ValueCastTo::<{dtype_to_rust_type(dtype)}>::cast(&c)
             }}""")
 
-        elif expr.get_opcode() == "Select":
+        elif isinstance(expr, Select):
             select = expr.as_sub_select()
             cond = dump_rval_ref(self.module_ctx, self.sys, select.cond())
             true_value = dump_rval_ref(self.module_ctx, self.sys, select.true_value())
@@ -229,7 +229,7 @@ class ElaborateModule(Visitor):
 
             code.append(f"if {cond} {{ {true_value} }} else {{ {false_value} }}")
 
-        elif expr.get_opcode() == "Select1Hot":
+        elif isinstance(expr, Select1Hot):
             select1hot = expr.as_sub_select1hot()
             cond = dump_rval_ref(self.module_ctx, self.sys, select1hot.cond())
 
@@ -244,7 +244,7 @@ class ElaborateModule(Visitor):
             result.append(" else { unreachable!() } }")
             code.append("".join(result))
 
-        elif expr.get_opcode() == "Cast":
+        elif isinstance(expr, Cast):
             cast = expr.as_sub_cast()
             dest_dtype = cast.dest_type()
             a = dump_rval_ref(self.module_ctx, self.sys, cast.x())
@@ -252,39 +252,30 @@ class ElaborateModule(Visitor):
             if cast.get_subcode() in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
                 code.append(f"ValueCastTo::<{dtype_to_rust_type(dest_dtype)}>::cast(&{a})")
 
-        elif expr.get_opcode() == "Bind":
+        elif isinstance(expr, Bind):
             code.append("()")
 
-        # elif expr.get_opcode() == "BlockIntrinsic":
-        #     bi = expr.as_sub_block_intrinsic()
-        #     intrinsic = bi.get_subcode()
+        elif isinstance(expr, Intrinsic):
+            intrinsic = expr.opcode
 
-        #     value = ""
-        #     if bi.value():
-        #         value = dump_rval_ref(self.module_ctx, self.sys, bi.value())
+            if  intrinsic == Intrinsic.WAIT_UNTIL:
+                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+                code.append(f"if !{value} {{ return false; }}")
 
-        #     if intrinsic == BlockIntrinsic.VALUE:
-        #         code.append(value)
+            elif intrinsic == Intrinsic.CONDITION:
+                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+                open_scope = True
+                code.append(f"if {value} {{")
 
-        #     elif intrinsic == BlockIntrinsic.CYCLED:
-        #         open_scope = True
-        #         code.append(f"if sim.stamp / 100 == ({value} as usize) {{")
+            elif intrinsic == BlockIntrinsic.FINISH:
+                code.append("std::process::exit(0);")
 
-        #     elif intrinsic == BlockIntrinsic.WAIT_UNTIL:
-        #         code.append(f"if !{value} {{ return false; }}")
+            elif intrinsic == BlockIntrinsic.ASSERT:
+                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+                code.append(f"assert!({value});")
 
-        #     elif intrinsic == BlockIntrinsic.CONDITION:
-        #         open_scope = True
-        #         code.append(f"if {value} {{")
-
-        #     elif intrinsic == BlockIntrinsic.FINISH:
-        #         code.append("std::process::exit(0);")
-
-        #     elif intrinsic == BlockIntrinsic.ASSERT:
-        #         code.append(f"assert!({value});")
-
-        #     elif intrinsic == BlockIntrinsic.BARRIER:
-        #         code.append(f"/* Barrier: {value} */")
+            elif intrinsic == BlockIntrinsic.BARRIER:
+                code.append(f"/* Barrier */")
 
         # Format the result with proper indentation and variable assignment
         indent_str = " " * self.indent

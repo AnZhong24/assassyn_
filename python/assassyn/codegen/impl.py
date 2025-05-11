@@ -13,6 +13,8 @@ from ..block import Block
 from ..expr import Expr
 from ..utils import identifierize
 
+from .simulator import elaborate
+
 CG_OPCODE = {
     expr.BinaryOp.ADD: 'add',
     expr.BinaryOp.SUB: 'sub',
@@ -530,4 +532,7 @@ def codegen( #pylint: disable=too-many-arguments
     cg = CodeGen(simulator, verilog, idle_threshold, sim_threshold,
                  random, resource_base , fifo_depth)
     cg.visit_system(sys)
+
+    elaborate(sys)
+
     return cg.get_source()

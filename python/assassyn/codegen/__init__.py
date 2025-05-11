@@ -22,17 +22,4 @@ from .impl import (
     CG_SIMULATOR
 )
 
-# Export all the necessary items
-__all__ = [
-    'codegen',
-    'generate_dtype',
-    'const_int_wrapper',
-    'generate_init_value',
-    'generate_port',
-    'opcode_to_ib',
-    'CodeGen',
-    'EmitBinds',
-    'CG_OPCODE',
-    'CG_MIDFIX',
-    'CG_SIMULATOR'
-]
+from .simulator.elaborate import elaborate
