@@ -5,7 +5,7 @@ from assassyn.dtype import DType
 
 def dump_runtime(fd):
     """Generate the runtime module.
-    
+
     This matches the Rust function in src/backend/simulator/runtime.rs
     """
     # Add imports
@@ -16,7 +16,7 @@ use num_bigint::{BigInt, BigUint, ToBigInt, ToBigUint};
 use num_traits::Num;
 use std::fs::read_to_string;
     """)
-    
+
     # Add runtime types and implementations
     fd.write("""
 pub trait Cycled {
@@ -173,7 +173,7 @@ impl <T: Sized + Cycled>XEQ<T> {
   }
 }
     """)
-    
+
     # Add utility functions
     fd.write("""
 pub fn cyclize(stamp: usize) -> String {
@@ -209,49 +209,49 @@ pub trait ValueCastTo<T> {
   fn cast(&self) -> T;
 }
     """)
-    
+
     # Generate type casting implementations
     fd.write("impl ValueCastTo<bool> for bool { fn cast(&self) -> bool { self.clone() } }\n")
-    
+
     bigints = ["BigInt", "BigUint"]
     for i in range(2):
         bigint = bigints[i]
         other = bigints[1 - i]
-        
+
         # Self cast
         fd.write(f"impl ValueCastTo<{bigint}> for {bigint} {{ fn cast(&self) -> {bigint} {{ self.clone() }} }}\n")
-        
+
         # Cross cast between BigInt and BigUint
         fd.write(f"""impl ValueCastTo<{other}> for {bigint} {{ fn cast(&self) -> {other} {{ self.to_{other.lower()}().unwrap() }} }}\n""")
-        
+
         # Bool to BigInt/BigUint
         fd.write(f"""impl ValueCastTo<{bigint}> for bool {{ fn cast(&self) -> {bigint} {{
           if *self {{ 1.to_{bigint.lower()}().unwrap() }} else {{ 0.to_{bigint.lower()}().unwrap() }}
         }} }}\n""")
-        
+
         # BigInt/BigUint to bool
         fd.write(f"""impl ValueCastTo<bool> for {bigint} {{ fn cast(&self) -> bool {{
           !self.eq(&0.to_{bigint.lower()}().unwrap())
         }} }}\n""")
-    
+
     # Generate integer casting implementations
     for sign_i in range(2):
         for i in range(3, 7):
             src_ty = f"{'ui'[sign_i]}{1 << i}"
-            
+
             # To bool
             fd.write(f"impl ValueCastTo<bool> for {src_ty} {{ fn cast(&self) -> bool {{ *self != 0 }} }}\n")
-            
+
             # From bool
             fd.write(f"""impl ValueCastTo<{src_ty}> for bool {{
                 fn cast(&self) -> {src_ty} {{ if *self {{ 1 }} else {{ 0 }} }}
               }}\n""")
-            
+
             # To BigInt/BigUint
             for bigint in bigints:
                 fd.write(f"""impl ValueCastTo<{bigint}> for {src_ty} {{ fn cast(&self) -> {bigint} {{ self.to_{bigint.lower()}().unwrap() }} }}\n""")
-            
-            # From BigInt 
+
+            # From BigInt
             fd.write(f"""impl ValueCastTo<{src_ty}> for BigInt {{
                 fn cast(&self) -> {src_ty} {{
                   let (sign, data) = self.to_u64_digits();
@@ -265,7 +265,7 @@ pub trait ValueCastTo<T> {
                   }}
                 }}
               }}\n""")
-            
+
             # From BigUint
             fd.write(f"""impl ValueCastTo<{src_ty}> for BigUint {{
                 fn cast(&self) -> {src_ty} {{
@@ -277,19 +277,19 @@ pub trait ValueCastTo<T> {
                   }}
                 }}
               }}\n""")
-            
+
             # Between integer types
             for sign_j in range(2):
                 for j in range(3, 7):
                     dst_ty = f"{'ui'[sign_j]}{1 << j}"
-                    
+
                     if i == j and sign_i == sign_j:
                         # Self cast
                         fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ fn cast(&self) -> {dst_ty} {{ self.clone() }} }}\n")
                     else:
                         # Cross cast
                         fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ fn cast(&self) -> {dst_ty} {{ *self as {dst_ty} }} }}\n")
-                        
+
     # End file with newline
     fd.write("\n")
     return True
