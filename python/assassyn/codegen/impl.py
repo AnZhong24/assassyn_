@@ -1,17 +1,17 @@
 '''The module to generate the assassyn IR builder for the given system'''
 
-from . import visitor
-from . import dtype
-from . import expr
-from . import module
-from . import block
-from . import const
-from .builder import SysBuilder
-from .array import Array
-from .module import Module, Port
-from .block import Block
-from .expr import Expr
-from .utils import identifierize
+from .. import visitor
+from .. import dtype
+from .. import expr
+from .. import module
+from .. import block
+from .. import const
+from ..builder import SysBuilder
+from ..array import Array
+from ..module import Module, Port
+from ..block import Block
+from ..expr import Expr
+from ..utils import identifierize
 
 CG_OPCODE = {
     expr.BinaryOp.ADD: 'add',
