@@ -4,6 +4,8 @@ import os
 from collections import defaultdict
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
+from ...block import Block
+from ...expr import Expr
 
 
 def dump_simulator(sys, config, fd):
@@ -35,8 +37,7 @@ def dump_simulator(sys, config, fd):
         if array.get_initializer():
             init_values = []
             for x in array.get_initializer():
-                int_imm = x.as_int_imm()
-                init_values.append(int_imm_dumper_impl(int_imm.dtype(), int_imm.get_value()))
+                init_values.append(int_imm_dumper_impl(x.get_dtype(), x.get_value()))
             init_str = ", ".join(init_values)
             simulator_init.append(f"{name} : Array::new_with_init(vec![{init_str}]),")
         else:
@@ -71,7 +72,7 @@ def dump_simulator(sys, config, fd):
         else:
             # Gather expressions with external visibility for downstream modules
             for expr in module.ext_interf_iter():
-                if expr.is_expr() and externally_used_combinational(expr):
+                if isinstance(expr, Expr) and externally_used_combinational(expr):
                     expr_validities.add(expr)
 
     # Add value validity tracking for expressions with external visibility
@@ -215,9 +216,8 @@ def dump_simulator(sys, config, fd):
 
         # Collect cycles from testbench blocks
         for node in testbench.get_body().body_iter():
-            if node.is_block():
-                block = node.as_block()
-                if block.get_cycle() is not None:
+            if isinstance(node, Block):
+                if node.get_cycle() is not None:
                     cycles.append(block.get_cycle())
 
         if cycles:

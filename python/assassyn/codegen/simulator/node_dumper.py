@@ -5,9 +5,11 @@ from .utils import namify, int_imm_dumper_impl, fifo_name
 from ...expr import (
     Expr,
     PureIntrinsic,
-    Array,
 )
 from ...array import Array
+from ...module import Module
+from ...value import IntImm, StrImm
+from ...module import FIFO
 
 
 def dump_rval_ref(module_ctx, sys, node):
@@ -18,28 +20,22 @@ def dump_rval_ref(module_ctx, sys, node):
         return namify(node.get_name())
 
     if isinstance(node, FIFO):
-        fifo = node.as_fifo()
-        return fifo_name(fifo)
+        return fifo_name(node)
 
     if isinstance(node, IntImm):
-        int_imm = node.as_int_imm()
-        return int_imm_dumper_impl(int_imm.dtype(), int_imm.get_value())
+        return int_imm_dumper_impl(node.get_dtype(), node.get_value())
 
     if isinstance(node, StrImm):
-        str_imm = node.as_str_imm()
-        value = str_imm.get_value()
+        value = node.get_value()
         # Using Python's repr to get quote-escaped string
         return repr(value)
 
     if isinstance(node, Module):
-        module = node.as_module()
-        return namify(module.get_name())
+        return namify(node.get_name())
 
     if isinstance(node, Expr):
-        expr = node.as_expr()
-
         # Figure out the ID format based on context
-        parent_block = expr.get_parent().as_block()
+        parent_block = node.get_parent()
         if self.module_ctx != parent_block.get_module():
             # Expression from another module
             raw = namify(expr.get_name())
@@ -58,12 +54,12 @@ def dump_rval_ref(module_ctx, sys, node):
             return f"{namify(expr.get_name())}.clone()"
 
         # Handle FIFO peek special case
-        if expr.as_sub_expr_type() == PureIntrinsic and expr.get_subcode() == "FIFOPeek":
-            id = namify(expr.get_name())
+        if isinstance(node, PureIntrinsic) and node.subcode == "FIFOPeek":
+            id = namify(node.get_name())
             id += ".clone().unwrap()"
             return id
 
-        return namify(expr.get_name())
+        return namify(node.get_name())
 
     else:
         # Default case
@@ -83,13 +79,10 @@ def externally_used_combinational(expr):
 
     # Check if any user is in a different module
     for user in expr.users():
-        operand = user.as_operand()
-        if operand:
-            parent = operand.get_parent()
-            if parent:
-                user_expr = parent.as_expr()
-                if user_expr:
-                    if user_expr.get_block().get_module() != this_module:
+        if hasattr(user, 'get_parent'):
+            parent = user.get_parent()
+            if parent and isinstance(parent, Expr):
+                if parent.get_block().get_module() != this_module:
                         return True
 
     return False

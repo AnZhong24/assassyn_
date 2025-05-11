@@ -1,6 +1,7 @@
 """Module elaboration for simulator code generation."""
 
 from ...visitor import Visitor
+from ...block import Block
 from ...expr import (
         Expr,
         BinaryOp,
@@ -73,11 +74,10 @@ class ElaborateModule(Visitor):
         code = []
 
         if isinstance(expr, BinaryOp):
-            binary = expr.as_sub_binary()
             binop = BinaryOp.OPERATORS[expr.opcode]
-            rust_ty = dtype_to_rust_type(ty)
-            lhs = dump_rval_ref(self.module_ctx, self.sys, binary.a())
-            rhs = dump_rval_ref(self.module_ctx, self.sys, binary.b())
+            rust_ty = dtype_to_rust_type(expr.get_dtype())
+            lhs = dump_rval_ref(self.module_ctx, self.sys, expr.a)
+            rhs = dump_rval_ref(self.module_ctx, self.sys, expr.b)
             # Special handling for shift operations
             if binop in [BinaryOp.SHL, BinaryOp.SHR]:
                 rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
@@ -87,8 +87,7 @@ class ElaborateModule(Visitor):
             code.append(f"{lhs} {binop} {rhs}")
 
         elif isinstance(expr, UnaryOp):
-            unary = expr.opcode
-            operand = dump_rval_ref(self.module_ctx, self.sys, unary.x())
+            operand = dump_rval_ref(self.module_ctx, self.sys, expr.x)
             code.append(f"{unary.get_opcode()}{operand}")
 
         elif isinstance(expr, ArrayRead):
@@ -99,9 +98,9 @@ class ElaborateModule(Visitor):
             code.append(f"sim.{array_name}.payload[{idx_val} as usize].clone()")
 
         elif isinstance(expr, ArrayWrite):
-            array = store.arr
-            idx = store.idx
-            value = store.value
+            array = expr.arr
+            idx = expr.idx
+            value = expr.value
 
             array_name = namify(array.get_name())
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
@@ -187,11 +186,10 @@ class ElaborateModule(Visitor):
             code.append("".join(result))
 
         elif isinstance(expr, Slice):
-            slice_expr = expr.as_sub_slice()
-            a = dump_rval_ref(self.module_ctx, self.sys, slice_expr.x())
-            l = slice_expr.l()
-            r = slice_expr.r()
-            dtype = slice_expr.dtype()
+            a = dump_rval_ref(self.module_ctx, self.sys, expr.x)
+            l = expr.l
+            r = expr.r
+            dtype = expr.get_dtype()
             mask_bits = "1" * (r - l + 1)
 
             if l < 64 and r < 64:
@@ -208,11 +206,10 @@ let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
             }}""")
 
         elif isinstance(expr, Concat):
-            concat = expr.as_sub_concat()
-            dtype = expr.dtype()
-            a = dump_rval_ref(self.module_ctx, self.sys, concat.msb())
-            b = dump_rval_ref(self.module_ctx, self.sys, concat.lsb())
-            b_bits = concat.lsb().get_dtype().get_bits()
+            dtype = expr.get_dtype()
+            a = dump_rval_ref(self.module_ctx, self.sys, expr.msb)
+            b = dump_rval_ref(self.module_ctx, self.sys, expr.lsb)
+            b_bits = expr.lsb.get_dtype().get_bits()
 
             code.append(f"""{{
                 let a = ValueCastTo::<BigUint>::cast(&{a});
@@ -222,21 +219,19 @@ let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
             }}""")
 
         elif isinstance(expr, Select):
-            select = expr.as_sub_select()
-            cond = dump_rval_ref(self.module_ctx, self.sys, select.cond())
-            true_value = dump_rval_ref(self.module_ctx, self.sys, select.true_value())
-            false_value = dump_rval_ref(self.module_ctx, self.sys, select.false_value())
+            cond = dump_rval_ref(self.module_ctx, self.sys, expr.cond)
+            true_value = dump_rval_ref(self.module_ctx, self.sys, expr.true_value)
+            false_value = dump_rval_ref(self.module_ctx, self.sys, expr.false_value)
 
             code.append(f"if {cond} {{ {true_value} }} else {{ {false_value} }}")
 
         elif isinstance(expr, Select1Hot):
-            select1hot = expr.as_sub_select1hot()
-            cond = dump_rval_ref(self.module_ctx, self.sys, select1hot.cond())
+            cond = dump_rval_ref(self.module_ctx, self.sys, expr.cond)
 
             result = [f'''{{ let cond = {cond};
 assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
-            for i, value in enumerate(select1hot.value_iter()):
+            for i, value in enumerate(expr.values):
                 if i != 0:
                     result.append(" else ")
 
@@ -247,11 +242,10 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
             code.append("".join(result))
 
         elif isinstance(expr, Cast):
-            cast = expr.as_sub_cast()
-            dest_dtype = cast.dest_type()
-            a = dump_rval_ref(self.module_ctx, self.sys, cast.x())
+            dest_dtype = expr.dest_type
+            a = dump_rval_ref(self.module_ctx, self.sys, expr.x)
 
-            if cast.get_subcode() in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
+            if expr.subcode in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
                 code.append(f"ValueCastTo::<{dtype_to_rust_type(dest_dtype)}>::cast(&{a})")
 
         elif isinstance(expr, Bind):
@@ -304,7 +298,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
     def visit_int_imm(self, int_imm):
         """Visit an integer immediate value."""
-        return f"ValueCastTo::<{dtype_to_rust_type(int_imm.dtype())}>::cast(&{int_imm.get_value()})"
+        return f"ValueCastTo::<{dtype_to_rust_type(int_imm.get_dtype())}>::cast(&{int_imm.get_value()})"
 
     def visit_block(self, block):
         """Visit a block and generate its implementation."""
@@ -315,14 +309,12 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
         # Visit each element in the block
         for elem in block.body_iter():
-            if elem.get_kind() == "Expr":
-                expr = elem.as_expr()
-                result.append(self.visit_expr(expr))
-            elif elem.get_kind() == "Block":
-                sub_block = elem.as_block()
-                result.append(self.visit_block(sub_block))
+            if isinstance(elem, Expr):
+                result.append(self.visit_expr(elem))
+            elif isinstance(elem, Block):
+                result.append(self.visit_block(elem))
             else:
-                raise ValueError(f"Unexpected reference type: {elem.get_kind()}")
+                raise ValueError(f"Unexpected reference type: {type(elem).__name__}")
 
         # Restore indentation and close scope if needed
         if restore_indent != self.indent:
