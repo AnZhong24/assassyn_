@@ -300,6 +300,9 @@ class Slice(Expr):
         assert isinstance(l, int), f'Only int literal can slice, but got {type(l)}'
         assert isinstance(r, int), f'Only int literal can slice, but got {type(r)}'
         assert isinstance(x, Value), f'{type(x)} is not a Value!'
+        from ..dtype import to_uint
+        l = to_uint(l)
+        r = to_uint(r)
         super().__init__(Slice.SLICE, [x, l, r])
 
     @property
@@ -310,19 +313,19 @@ class Slice(Expr):
     @property
     def l(self) -> int:
         '''Get the value to slice'''
-        return self._operands[1].value
+        return self._operands[1]
 
     @property
     def r(self) -> int:
         '''Get the value to slice'''
-        return self._operands[2].value
+        return self._operands[2]
 
     @property
     def dtype(self) -> DType:
         '''Get the data type of the sliced value'''
         # pylint: disable=import-outside-toplevel
         from ..dtype import Bits
-        return Bits(self.r - self.l + 1)
+        return Bits(self.r.value - self.l.value + 1)
 
     def __repr__(self):
         return f'{self.as_operand()} = {self.x.as_operand()}[{self.l}:{self.r}]'
@@ -597,7 +600,7 @@ class Select1Hot(Expr):
     SELECT_1HOT = 1001
 
     def __init__(self, opcode, cond, values):
-        super().__init__(opcode, [cond] + values)
+        super().__init__(opcode, [cond] + list(values))
 
     @property
     def cond(self) -> Value:

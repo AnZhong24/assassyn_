@@ -343,6 +343,8 @@ class CodeGen(visitor.Visitor):
             imm_decl = f'  let {imm_var} = {const_int_wrapper(node.value, ty)}; // {node}'
             self.code.append(imm_decl)
             return imm_var
+        if isinstance(node, int):
+            return str(node)
         if isinstance(node, module.Port):
             module_name = self.generate_rval(node.module)
             port_name = f'{module_name}_{node.name}'
