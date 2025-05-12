@@ -60,6 +60,16 @@ class Expr(Value):
         self._operands = [Operand(i, self) if isinstance(i, Value) else i for i in operands]
         self.users = []
 
+    def get_operand(self, idx: int):
+        '''Get the operand at the given index'''
+        if idx < 0 or idx >= len(self._operands):
+            raise IndexError(f'Index {idx} out of range for {self}')
+        return self._operands[idx]
+
+    def operands(self):
+        '''Get the operands of this expression'''
+        return self._operands
+
     def as_operand(self):
         '''Dump the expression as an operand'''
         return f'_{identifierize(self)}'
@@ -441,6 +451,25 @@ class PureIntrinsic(Expr):
     def args(self):
         '''Get the arguments of this intrinsic'''
         return self._operands
+
+    @property
+    def dtype(self):
+        '''Get the data type of this intrinsic'''
+        # pylint: disable=import-outside-toplevel
+        from ..dtype import Bits
+
+        if self.opcode == PureIntrinsic.FIFO_PEEK:
+            fifo = self.args[0].as_operand()
+            # pylint: disable=import-outside-toplevel
+            from ..module import Port
+            assert isinstance(fifo, Port)
+            return fifo.dtype
+
+        if self.opcode in [PureIntrinsic.FIFO_VALID, PureIntrinsic.MODULE_TRIGGERED,
+                           PureIntrinsic.VALUE_VALID]:
+            return Bits(1)
+
+        raise NotImplementedError(f'Unsupported intrinsic operation {self.opcode}')
 
     def __repr__(self):
         if self.opcode in [PureIntrinsic.FIFO_PEEK, PureIntrinsic.FIFO_VALID,

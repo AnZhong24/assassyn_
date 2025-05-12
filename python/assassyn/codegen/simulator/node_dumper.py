@@ -1,7 +1,7 @@
 """Node reference dumper for simulator code generation."""
 
 from .utils import namify, int_imm_dumper_impl, fifo_name
-from ...expr import Expr
+from ...expr import Expr, Operand
 from ...array import Array
 from ...module import Module, Port
 from ...const import Const
@@ -11,6 +11,8 @@ from ...expr import FIFOPush
 def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statements
         module_ctx, _, node):
     """Dispatch to appropriate handler based on node kind."""
+
+    unwrapped = node.value if isinstance(node, Operand) else node
 
     if isinstance(node, Array):
         return namify(node.get_name())
@@ -43,8 +45,11 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
         # Large value needs cloning
         return f"{namify(node.get_name())}.clone()"
 
+    if isinstance(node, str):
+        return f'"{node}"'
+
     # Default case
-    return namify(node.to_string())
+    return namify(node.as_operand())
 
 
 def externally_used_combinational(expr: Expr) -> bool:
@@ -60,11 +65,9 @@ def externally_used_combinational(expr: Expr) -> bool:
     this_module = expr.parent.module
 
     # Check if any user is in a different module
-    for user in expr.users():
-        if hasattr(user, 'get_parent'):
-            parent = user.get_parent()
-            if parent and isinstance(parent, Expr):
-                if parent.get_block().get_module() != this_module:
-                    return True
+    for user in expr.users:
+        parent_module = user.parent.module
+        if parent_module != this_module:
+            return True
 
     return False

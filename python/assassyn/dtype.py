@@ -7,11 +7,16 @@ from .expr import Value
 class DType:
     '''Base class for data type'''
 
-    bits: int  # Number of bits in this data type
+    _bits: int  # Number of bits in this data type
 
     def __init__(self, bits: int):
         '''The constructor, only records the bits'''
-        self.bits = bits
+        self._bits = bits
+
+    @property
+    def bits(self):
+        '''The number of bits in this data type'''
+        return self._bits
 
     def attributize(self, value, name):
         '''The syntax sugar for creating a port'''
@@ -19,6 +24,26 @@ class DType:
     def inrange(self, value):
         '''Check if the value is in the range of the data type'''
         return True
+
+    def is_int(self):
+        '''Check if this is an integer data type'''
+        return isinstance(self, (Int, UInt))
+
+    def is_raw(self):
+        '''Check if this is a raw bits data type'''
+        return isinstance(self, Bits)
+
+    def is_signed(self):
+        '''Check if this is a signed data type'''
+        return isinstance(self, Int)
+
+    def is_module(self):
+        '''Check if this is a module data type'''
+        return isinstance(self, Module)
+
+    def is_array(self):
+        '''Check if this is an array data type'''
+        return isinstance(self, Array)
 
 class Void(DType):
     '''Void data type'''
@@ -28,6 +53,26 @@ class Void(DType):
 
     def inrange(self, value):
         return False
+
+class ArrayType(DType):
+
+    '''Array data type'''
+
+    def __init__(self, dtype, size):
+        super().__init__(size * dtype.bits)
+        self._scalar_ty = dtype
+        self._size = size
+
+    @property
+    def size(self):
+        '''The number of elements in this array'''
+        return self._size
+
+    @property
+    def scalar_ty(self):
+        '''The data type of the elements in this array'''
+        return self._scalar_ty
+
 
 _VOID = Void()
 

@@ -1,6 +1,7 @@
 """Utility functions for simulator generation."""
 
-from ...dtype import DType
+from ...dtype import DType, Void, ArrayType
+from ...module import Port
 
 
 def namify(name: str) -> str:
@@ -37,7 +38,7 @@ def dtype_to_rust_type(dtype: DType) -> str:
     """
     if dtype.is_int() or dtype.is_raw():
         prefix = "u" if not dtype.is_signed() or dtype.is_raw() else "i"
-        bits = dtype.get_bits()
+        bits = dtype.bits
 
         if 8 <= bits <= 64:
             # Round up to next power of 2
@@ -51,11 +52,12 @@ def dtype_to_rust_type(dtype: DType) -> str:
             return 'BigUint' if not dtype.is_signed() or dtype.is_raw() else 'BigInt'
         raise ValueError(f"Unsupported data type: {dtype}")
 
-    if dtype.is_module():
+    if isinstance(dtype, Void):
         return "Box<EventKind>"
-    if dtype.is_array():
-        elem_ty = dtype_to_rust_type(dtype.element_type())
-        size = dtype.get_size()
+
+    if isinstance(dtype, ArrayType):
+        elem_ty = dtype_to_rust_type(dtype.scalar_ty)
+        size = dtype.size
         return f"[{elem_ty}; {size}]"
     raise ValueError(f"Unsupported data type: {dtype}")
 
@@ -75,10 +77,10 @@ def int_imm_dumper_impl(ty: DType, value: int) -> str:
     return f"ValueCastTo::<{dtype_to_rust_type(ty)}>::cast(&({value} as {scalar_ty}))"
 
 
-def fifo_name(fifo):
+def fifo_name(fifo: Port):
     """Generate a name for a FIFO.
 
     This matches the Rust macro in src/backend/simulator/elaborate.rs
     """
-    module = fifo.get_parent().as_module()
-    return f"{namify(module.get_name())}_{namify(fifo.get_name())}"
+    module = fifo.module
+    return f"{namify(module.name)}_{namify(fifo.name)}"

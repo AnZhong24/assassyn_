@@ -74,7 +74,7 @@ class ElaborateModule(Visitor):
         id_and_exposure = None
         if node.is_valued():
             need_exposure = externally_used_combinational(node)
-            id_expr = namify(node.to_string())
+            id_expr = namify(node.as_operand())
             id_and_exposure = (id_expr, need_exposure)
 
         # Handle different expression types
@@ -83,9 +83,9 @@ class ElaborateModule(Visitor):
 
         if isinstance(node, BinaryOp):
             binop = BinaryOp.OPERATORS[node.opcode]
-            rust_ty = dtype_to_rust_type(node.get_dtype())
-            lhs = dump_rval_ref(self.module_ctx, self.sys, node.a)
-            rhs = dump_rval_ref(self.module_ctx, self.sys, node.b)
+            rust_ty = dtype_to_rust_type(node.dtype)
+            lhs = dump_rval_ref(self.module_ctx, self.sys, node.lhs)
+            rhs = dump_rval_ref(self.module_ctx, self.sys, node.rhs)
             # Special handling for shift operations
             if binop in [BinaryOp.SHL, BinaryOp.SHR]:
                 rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
@@ -99,18 +99,18 @@ class ElaborateModule(Visitor):
             code.append(f"{node.get_opcode()}{operand}")
 
         elif isinstance(node, ArrayRead):
-            array = node.arr
+            array = node.array
             idx = node.idx
-            array_name = namify(array.get_name())
+            array_name = namify(array.name)
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
             code.append(f"sim.{array_name}.payload[{idx_val} as usize].clone()")
 
         elif isinstance(node, ArrayWrite):
-            array = node.arr
+            array = node.array
             idx = node.idx
-            value = node.value
+            value = node.val
 
-            array_name = namify(array.get_name())
+            array_name = namify(array.name)
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
             value_val = dump_rval_ref(self.module_ctx, self.sys, value)
             module_writer = self.module_name
@@ -125,7 +125,7 @@ class ElaborateModule(Visitor):
 
             bind = node.bind
 
-            event_q = f"{namify(bind.callee.get_name())}_event"
+            event_q = f"{namify(bind.callee.name)}_event"
 
             code.append(f"""{{
               let stamp = sim.stamp - sim.stamp % 100 + 100;
@@ -148,26 +148,26 @@ class ElaborateModule(Visitor):
             intrinsic = node.opcode
 
             if intrinsic == PureIntrinsic.FIFO_PEEK:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))
                 code.append(f"sim.{port_self}.front().cloned()")
 
             elif intrinsic == PureIntrinsic.FIFO_VALID:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))
                 code.append(f"!sim.{port_self}.is_empty()")
 
             elif intrinsic == PureIntrinsic.VALUE_VALID:
-                value = node.get_operand_value(0)
+                value = node.get_operand(0)
                 value_expr = value.as_expr()
                 code.append(f"sim.{namify(value_expr.get_name())}_value.is_some()")
 
             elif intrinsic == PureIntrinsic.MODULE_TRIGGERED:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))
                 code.append(f"sim.{port_self}_triggered")
 
         elif isinstance(node, FIFOPush):
             fifo = node.fifo
             fifo_id = fifo_name(fifo)
-            value = dump_rval_ref(self.module_ctx, self.sys, node.value)
+            value = dump_rval_ref(self.module_ctx, self.sys, node.val)
             module_writer = self.module_name
 
             code.append(f"""{{
@@ -181,12 +181,14 @@ class ElaborateModule(Visitor):
             result = [f'print!("@line:{{:<5}} {{:<10}}: [{mn}]\\t", line!(), cyclize(sim.stamp));']
             result.append("println!(")
 
-            for elem in node.operand_iter():
-                dump = dump_rval_ref(self.module_ctx, self.sys, elem.get_value())
+            for elem in node.operands():
+                dump = dump_rval_ref(self.module_ctx, self.sys, elem)
 
-                # Special handling for boolean display
-                if elem.get_value().get_dtype() and elem.get_value().get_dtype().get_bits() == 1:
-                    dump = f"if {dump} {{ 1 }} else {{ 0 }}"
+                if not isinstance(elem, str):
+                    dtype = elem.dtype
+                    # Special handling for boolean display
+                    if dtype.bits == 1:
+                        dump = f"if {dump} {{ 1 }} else {{ 0 }}"
 
                 result.append(f"{dump}, ")
 
@@ -197,7 +199,7 @@ class ElaborateModule(Visitor):
             a = dump_rval_ref(self.module_ctx, self.sys, node.x)
             l = node.l
             r = node.r
-            dtype = node.get_dtype()
+            dtype = node.dtype
             mask_bits = "1" * (r - l + 1)
 
             if l < 64 and r < 64:
@@ -214,10 +216,10 @@ let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
             }}""")
 
         elif isinstance(node, Concat):
-            dtype = node.get_dtype()
+            dtype = node.dtype
             a = dump_rval_ref(self.module_ctx, self.sys, node.msb)
             b = dump_rval_ref(self.module_ctx, self.sys, node.lsb)
-            b_bits = node.lsb.get_dtype().get_bits()
+            b_bits = node.lsb.dtype.bits
 
             code.append(f"""{{
                 let a = ValueCastTo::<BigUint>::cast(&{a});
@@ -306,8 +308,8 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
     def visit_int_imm(self, int_imm):
         """Visit an integer immediate value."""
-        ty = dump_rval_ref(self.module_ctx, self.sys, int_imm.get_type())
-        value = int_imm.get_value()
+        ty = dump_rval_ref(self.module_ctx, self.sys, int_imm.dtype)
+        value = int_imm.value
         return f"ValueCastTo::<{ty}>::cast(&{value})"
 
     def visit_block(self, node: Block):
@@ -332,7 +334,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
             result.append(f"{' ' * self.indent}}}\n")
 
         # Handle block value if present
-        if node.get_value():
-            return f"{{ {''.join(result)} }}"
+        # if node.get_value():
+        #     return f"{{ {''.join(result)} }}"
 
         return "".join(result)

@@ -4,12 +4,14 @@ import os
 from collections import defaultdict
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
+from ...module import Downstream
+from ...builder import SysBuilder
 from ...block import Block
 from ...expr import Expr
 
 
 def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements
-        sys, config, fd):
+                   sys: SysBuilder, config, fd):
     """Generate the simulator module.
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
@@ -29,20 +31,20 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     fd.write("pub struct Simulator { pub stamp: usize, ")
 
     # Add array fields to simulator struct
-    for array in sys.array_iter():
-        name = namify(array.get_name())
-        dtype = dtype_to_rust_type(array.scalar_ty())
+    for array in sys.arrays:
+        name = namify(array.name)
+        dtype = dtype_to_rust_type(array.scalar_ty)
         fd.write(f"pub {name} : Array<{dtype}>, ")
 
         # Handle array initialization
-        if array.get_initializer():
+        if array.initializer:
             init_values = []
-            for x in array.get_initializer():
-                init_values.append(int_imm_dumper_impl(x.get_dtype(), x.get_value()))
+            for x in array.initializer:
+                init_values.append(int_imm_dumper_impl(array.scalar_ty, x))
             init_str = ", ".join(init_values)
             simulator_init.append(f"{name} : Array::new_with_init(vec![{init_str}]),")
         else:
-            simulator_init.append(f"{name} : Array::new({array.get_size()}),")
+            simulator_init.append(f"{name} : Array::new({array.size}),")
 
         registers.append(name)
 
@@ -50,15 +52,15 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     expr_validities = set()
 
     # Add module fields to simulator struct
-    for module in sys.module_iter():
-        module_name = namify(module.get_name())
+    for module in sys.modules:
+        module_name = namify(module.name)
 
         # Add triggered flag for all modules
         fd.write(f"pub {module_name}_triggered : bool, ")
         simulator_init.append(f"{module_name}_triggered : false,")
         downstream_reset.append(f"self.{module_name}_triggered = false;")
 
-        if not module.is_downstream():
+        if isinstance(module, Downstream):
             # Add event queue for non-downstream modules
             fd.write(f"pub {module_name}_event : VecDeque<usize>, ")
             simulator_init.append(f"{module_name}_event : VecDeque::new(),")

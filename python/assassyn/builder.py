@@ -1,8 +1,16 @@
 '''The module provides the implementation of a class that is both IR builder and the system.'''
+from __future__ import annotations
 import os
+import typing
 import site
 import inspect
 from decorator import decorator
+
+if typing.TYPE_CHECKING:
+    from .module import Module
+    from .array import Array
+    from .dtype import DType
+    from .value import Value
 
 @decorator
 def ir_builder(func, *args, **kwargs):
@@ -39,9 +47,9 @@ class SysBuilder:
     '''The class serves as both the system and the IR builder.'''
 
     name: str  # Name of the system
-    modules: list  # List of modules
+    modules: typing.List[Module]  # List of modules
     downstreams: list  # List of downstream modules
-    arrays: list  # List of arrays
+    arrays: typing.List[Array]  # List of arrays
     _ctx_stack: dict  # Stack for context tracking
     _exposes: dict  # Dictionary of exposed nodes
 
