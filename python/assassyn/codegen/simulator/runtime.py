@@ -251,8 +251,8 @@ pub trait ValueCastTo<T> {
             src_ty = f"{'ui'[sign_i]}{1 << i}"
 
             # To bool
-            fd.write("impl ValueCastTo<bool> for {src_ty} {{ " +
-                      "fn cast(&self) -> bool {{ *self != 0 }} }}\n")
+            fd.write(f"impl ValueCastTo<bool> for {src_ty} {{ " +
+                      "fn cast(&self) -> bool { *self != 0 } }\n")
 
             # From bool
             fd.write(f"""impl ValueCastTo<{src_ty}> for bool {{

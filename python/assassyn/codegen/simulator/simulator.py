@@ -62,15 +62,15 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         simulator_init.append(f"{module_name}_triggered : false,")
         downstream_reset.append(f"self.{module_name}_triggered = false;")
 
-        if isinstance(module, Downstream):
+        if not isinstance(module, Downstream):
             # Add event queue for non-downstream modules
             fd.write(f"pub {module_name}_event : VecDeque<usize>, ")
             simulator_init.append(f"{module_name}_event : VecDeque::new(),")
 
             # Add FIFO fields for each FIFO
-            for fifo in module.fifo_iter():
+            for fifo in module.ports:
                 name = fifo_name(fifo)
-                ty = dtype_to_rust_type(fifo.scalar_ty())
+                ty = dtype_to_rust_type(fifo.dtype)
                 fd.write(f"pub {name} : FIFO<{ty}>, ")
                 simulator_init.append(f"{name} : FIFO::new(),")
                 registers.append(name)
@@ -206,7 +206,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
 
     # Add initial events for driver if present
     fd.write(f"""
-        for i in 1..={sim_threshold} {{ sim.driver_event.push_back(i * 100); }} """)
+        for i in 1..={sim_threshold} {{ sim.Driver_event.push_back(i * 100); }} """)
 
     # Add initial events for testbench if present
     if sys.has_module("testbench") is not None:
