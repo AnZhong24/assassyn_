@@ -21,14 +21,17 @@ class Intrinsic(Expr):
     BARRIER = 903
 
     opcode: int  # Operation code for this intrinsic
-    args: tuple  # Arguments to the intrinsic operation
 
     def __init__(self, opcode, *args):
-        super().__init__(opcode)
+        super().__init__(opcode, args)
         _, num_args, _, _ = INTRIN_INFO[opcode]
         if num_args is not None:
             assert len(args) == num_args
-        self.args = args
+
+    @property
+    def args(self):
+        '''Get the arguments of this intrinsic.'''
+        return self._operands
 
     def __repr__(self):
         args = {", ".join(i.as_operand() for i in self.args[0:])}

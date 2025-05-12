@@ -18,6 +18,7 @@ class Block:
     kind: int  # Kind of block
     _body: list[Expr]  # List of instructions in the block
     parent: typing.Union[typing.Self, ModuleBase]  # Parent block
+    module: typing.Optional[ModuleBase]  # Module of this block
 
     MODULE_ROOT = 0
     CONDITIONAL = 1
@@ -27,7 +28,7 @@ class Block:
     def __init__(self, kind: int):
         self.kind = kind
         self._body = []
-        self.parent = None
+        self.parent = self.module = None
 
     def __repr__(self):
         Singleton.repr_ident += 2
@@ -60,6 +61,7 @@ class Block:
             parent = Singleton.builder.current_module
         assert parent is not None
         self.parent = parent
+        self.module = Singleton.builder.current_module
         Singleton.builder.enter_context_of('block', self)
         return self
 

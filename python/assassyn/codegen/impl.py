@@ -12,8 +12,7 @@ from ..module import Module, Port
 from ..block import Block
 from ..expr import Expr
 from ..utils import identifierize
-
-from .simulator import elaborate
+#from .simulator import elaborate
 
 CG_OPCODE = {
     expr.BinaryOp.ADD: 'add',
@@ -381,11 +380,11 @@ class CodeGen(visitor.Visitor):
             args = ', '.join(self.generate_rval(i) for i in node.args[1:])
             res = f'sys.{ib_method}(fmt, vec![{args}]);'
         elif isinstance(node, expr.ArrayRead):
-            arr = self.generate_rval(node.arr)
+            arr = self.generate_rval(node.array)
             idx = self.generate_rval(node.idx)
             res = f'sys.{ib_method}({arr}, {idx});'
         elif isinstance(node, expr.ArrayWrite):
-            arr = self.generate_rval(node.arr)
+            arr = self.generate_rval(node.array)
             idx = self.generate_rval(node.idx)
             val = self.generate_rval(node.val)
             res = f'sys.{ib_method}({arr}, {idx}, {val});'
@@ -533,6 +532,6 @@ def codegen( #pylint: disable=too-many-arguments
                  random, resource_base , fifo_depth)
     cg.visit_system(sys)
 
-    elaborate(sys)
+    # elaborate(sys)
 
     return cg.get_source()

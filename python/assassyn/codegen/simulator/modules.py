@@ -1,5 +1,9 @@
 """Module elaboration for simulator code generation."""
 
+from __future__ import annotations
+
+import typing
+
 from ...visitor import Visitor
 from ...block import Block
 from ...expr import (
@@ -24,6 +28,9 @@ from ...expr import (
 from .utils import namify, dtype_to_rust_type, fifo_name
 from .node_dumper import dump_rval_ref, externally_used_combinational
 
+if typing.TYPE_CHECKING:
+    from ...module import Module
+
 
 class ElaborateModule(Visitor):
     """Visitor for elaborating modules.
@@ -38,20 +45,20 @@ class ElaborateModule(Visitor):
         self.module_name = ""
         self.module_ctx = None
 
-    def visit_module(self, node):
+    def visit_module(self, node: Module):
         """Visit a module and generate its implementation."""
-        self.module_name = node.get_name()
+        self.module_name = node.name
         self.module_ctx = node
 
         # Create function header
-        result = [f"\n// Elaborating module {namify(node.get_name())}"]
-        result.append(f"pub fn {namify(node.get_name())}(sim: &mut Simulator) -> bool {{")
+        result = [f"\n// Elaborating module {self.module_name}"]
+        result.append(f"pub fn {namify(self.module_name)}(sim: &mut Simulator) -> bool {{")
 
         # Increase indentation for function body
         self.indent += 2
 
         # Visit the module body
-        body = self.visit_block(node.get_body())
+        body = self.visit_block(node.body)
         result.append(body)
 
         # Decrease indentation and add function closing
@@ -61,11 +68,11 @@ class ElaborateModule(Visitor):
         return "\n".join(result)
 
     def visit_expr( # pylint: disable=too-many-branches, too-many-statements, too-many-locals
-            self, node):
+                   self, node: Expr):
         """Visit an expression and generate its implementation."""
         # Determine if the expression produces a value and if it needs exposure
         id_and_exposure = None
-        if node.get_opcode().is_valued():
+        if node.is_valued():
             need_exposure = externally_used_combinational(node)
             id_expr = namify(node.to_string())
             id_and_exposure = (id_expr, need_exposure)
@@ -303,7 +310,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
         value = int_imm.get_value()
         return f"ValueCastTo::<{ty}>::cast(&{value})"
 
-    def visit_block(self, node):
+    def visit_block(self, node: Block):
         """Visit a block and generate its implementation."""
         result = []
 
@@ -311,7 +318,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
         restore_indent = self.indent
 
         # Visit each element in the block
-        for elem in node.body_iter():
+        for elem in node.iter():
             if isinstance(elem, Expr):
                 result.append(self.visit_expr(elem))
             elif isinstance(elem, Block):

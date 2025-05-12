@@ -57,7 +57,7 @@ def externally_used_combinational(expr: Expr) -> bool:
     if isinstance(expr, FIFOPush):
         return False
 
-    this_module = expr.get_block().get_module()
+    this_module = expr.parent.module
 
     # Check if any user is in a different module
     for user in expr.users():

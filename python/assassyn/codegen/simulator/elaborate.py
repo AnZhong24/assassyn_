@@ -1,15 +1,21 @@
 """Elaborate function for Assassyn simulator generator."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
+import typing
 from pathlib import Path
 from .modules import ElaborateModule
 from .simulator import dump_simulator, dump_main
 from .runtime import dump_runtime
 
+if typing.TYPE_CHECKING:
+    from ...builder import SysBuilder
 
-def dump_modules(sys, fd):
+
+def dump_modules(sys: SysBuilder, fd):
     """Generate the modules.rs file.
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
@@ -24,7 +30,7 @@ use num_bigint::{BigInt, BigUint};
 
     # Generate each module's implementation
     em = ElaborateModule(sys)
-    for module in sys.module_iter():
+    for module in sys.modules:
         module_code = em.visit_module(module)
         fd.write(module_code)
 

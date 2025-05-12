@@ -11,8 +11,11 @@ def ir_builder(func, *args, **kwargs):
     #pylint: disable=cyclic-import,import-outside-toplevel
     from .const import Const
     from .utils import package_path
+    from .expr import Expr
 
     if not isinstance(res, Const):
+        if isinstance(res, Expr):
+            res.parent = Singleton.builder.current_block
         Singleton.builder.insert_point.append(res)
 
     package_dir = os.path.abspath(package_path())
