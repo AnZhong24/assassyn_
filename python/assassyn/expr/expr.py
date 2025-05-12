@@ -66,6 +66,7 @@ class Expr(Value):
             raise IndexError(f'Index {idx} out of range for {self}')
         return self._operands[idx]
 
+    @property
     def operands(self):
         '''Get the operands of this expression'''
         return self._operands

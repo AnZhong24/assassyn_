@@ -37,14 +37,6 @@ class DType:
         '''Check if this is a signed data type'''
         return isinstance(self, Int)
 
-    def is_module(self):
-        '''Check if this is a module data type'''
-        return isinstance(self, Module)
-
-    def is_array(self):
-        '''Check if this is an array data type'''
-        return isinstance(self, Array)
-
 class Void(DType):
     '''Void data type'''
 

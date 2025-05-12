@@ -24,6 +24,8 @@ def ir_builder(func, *args, **kwargs):
     if not isinstance(res, Const):
         if isinstance(res, Expr):
             res.parent = Singleton.builder.current_block
+            for i in res.operands:
+                Singleton.builder.current_module.add_external(i)
         Singleton.builder.insert_point.append(res)
 
     package_dir = os.path.abspath(package_path())
@@ -76,6 +78,18 @@ class SysBuilder:
         '''Exit the context of the given type.'''
         self._ctx_stack[ty].pop()
 
+    def has_driver(self):
+        for i in self.modules:
+            if i.__class__.__name__ == 'Driver':
+                return True
+        return False
+
+    def has_module(self, name):
+        '''Check if a module with the given name exists.'''
+        for i in self.modules:
+            if i.name == name:
+                return i
+        return None
     def __init__(self, name):
         self.name = name
         self.modules = []

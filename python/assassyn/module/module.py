@@ -7,12 +7,15 @@ from decorator import decorator
 
 from ..builder import Singleton, ir_builder
 from ..block import Block
-from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall
+from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall, Expr, Operand
+from ..array import Array
 from ..expr.intrinsic import wait_until
 from .base import ModuleBase
 
 if typing.TYPE_CHECKING:
     from ..dtype import DType
+    from ..value import Value
+    from ..expr import Operand
 
 def _reserved_module_name(name):
     return name in ['Driver', 'Testbench']
@@ -35,6 +38,7 @@ class Module(ModuleBase):
     name: str  # Name of the module
     _attrs: dict  # Dictionary of module attributes
     _ports: list  # List of ports
+    _externals: typing.Dict[Value, typing.List[Operand]]  # Dictionary of external values
 
     ATTR_DISABLE_ARBITER = 1
     ATTR_TIMING = 2
@@ -74,9 +78,28 @@ class Module(ModuleBase):
             port.module = self
             self._ports.append(getattr(self, name))
 
+        self._externals = {}
+
         assert Singleton.builder is not None, 'Cannot instantitate a module outside of a system!'
         Singleton.builder.modules.append(self)
 
+    def add_external(self, operand: Operand):
+        '''Add an external operand to this module.'''
+        is_external = False
+        if isinstance(operand, Operand):
+            value = operand.value
+            if isinstance(value, (Array, Module)):
+                is_external = True
+            if isinstance(value, Expr):
+                is_external = value.parent.module != self
+            if is_external:
+                if value not in self._externals:
+                    self._externals[value] = []
+                self._externals[value].append(operand)
+
+    @property
+    def externals(self):
+        return self._externals
 
     @property
     def ports(self):

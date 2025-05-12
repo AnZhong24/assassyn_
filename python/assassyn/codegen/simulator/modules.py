@@ -181,7 +181,7 @@ class ElaborateModule(Visitor):
             result = [f'print!("@line:{{:<5}} {{:<10}}: [{mn}]\\t", line!(), cyclize(sim.stamp));']
             result.append("println!(")
 
-            for elem in node.operands():
+            for elem in node.operands:
                 dump = dump_rval_ref(self.module_ctx, self.sys, elem)
 
                 if not isinstance(elem, str):

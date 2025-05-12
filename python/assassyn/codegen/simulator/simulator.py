@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
-from ...module import Downstream
+from ...module import Downstream, Module, SRAM
 from ...builder import SysBuilder
 from ...block import Block
 from ...expr import Expr
@@ -53,6 +53,8 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
 
     # Add module fields to simulator struct
     for module in sys.modules:
+        assert isinstance(module, Module)
+
         module_name = namify(module.name)
 
         # Add triggered flag for all modules
@@ -74,7 +76,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
                 registers.append(name)
         else:
             # Gather expressions with external visibility for downstream modules
-            for expr in module.ext_interf_iter():
+            for expr in module.externals:
                 if isinstance(expr, Expr) and externally_used_combinational(expr):
                     expr_validities.add(expr)
 
@@ -127,18 +129,18 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
 
     # Module simulation functions
     simulators = []
-    for module in sys.module_iter():
-        module_name = namify(module.get_name())
+    for module in sys.modules:
+        module_name = namify(module.name)
         fd.write(f"  fn simulate_{module_name}(&mut self) {{\n")
 
-        if not module.is_downstream():
+        if not isinstance(module, Downstream):
             # Event based triggering for non-downstream modules
             fd.write(f"    if self.event_valid(&self.{module_name}_event) {{\n")
         else:
             # Dependency based triggering for downstream modules
             upstream_conds = []
             for upstream in get_upstreams(module, topo_map, sys):
-                upstream_name = namify(upstream.get_name())
+                upstream_name = namify(upstream.name)
                 upstream_conds.append(f"self.{upstream_name}_triggered")
 
             conds = " || ".join(upstream_conds) if upstream_conds else "false"
@@ -147,7 +149,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         # Call module function and handle result
         fd.write(f"      let succ = super::modules::{module_name}(self);\n")
 
-        if not module.is_downstream():
+        if not isinstance(module, Downstream):
             # Pop event on success
             fd.write(f"      if succ {{ self.{module_name}_event.pop_front(); }}\n")
             fd.write("      else {\n")
@@ -193,27 +195,21 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     fd.write("];\n")
 
     # Initialize memory from files if needed
-    for module in sys.module_iter(downstream_only=True):
-        for attr in module.get_attrs():
-            if attr.kind == "MemoryParams" and attr.init_file:
-                init_file_path = os.path.join(config.get('resource_base', '.'), attr.init_file)
-                array = attr.pins['array']
-                array_name = namify(array.get_name())
-                fd.write(f'  load_hex_file(&mut sim.{array_name}.payload, "{init_file_path}");\n')
+    for sram in [m for m in sys.modules if isinstance(m, SRAM)]:
+        init_file_path = os.path.join(config.get('resource_base', '.'), sram.init_file)
+        array = sram.payload 
+        array_name = namify(array.name)
+        fd.write(f'  load_hex_file(&mut sim.{array_name}.payload, "{init_file_path}");\n')
 
     # Set simulation threshold
     sim_threshold = config.get('sim_threshold', 100)
 
     # Add initial events for driver if present
-    if sys.has_driver():
-        fd.write(f"""
-          for i in 1..={sim_threshold} {{
-            sim.driver_event.push_back(i * 100);
-          }}
-        """)
+    fd.write(f"""
+        for i in 1..={sim_threshold} {{ sim.driver_event.push_back(i * 100); }} """)
 
     # Add initial events for testbench if present
-    if sys.has_module("testbench"):
+    if sys.has_module("testbench") is not None:
         testbench = sys.get_module("testbench")
         cycles = []
 
@@ -264,7 +260,7 @@ def analyze_topological_order(sys):
     This is a simplified implementation of the topo_sort function in Rust.
     """
     # Get all downstream modules
-    modules = [m for m in sys.module_iter() if m.is_downstream()]
+    modules = [m for m in sys.modules if isinstance(m, Downstream)]
 
     # Build dependency graph
     graph = defaultdict(list)
