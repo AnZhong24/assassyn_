@@ -1,6 +1,6 @@
 """Utility functions for simulator generation."""
 
-from assassyn.dtype import DType
+from ...dtype import DType
 
 
 def namify(name: str) -> str:
@@ -43,26 +43,21 @@ def dtype_to_rust_type(dtype: DType) -> str:
             # Round up to next power of 2
             bits = 1 << (bits - 1).bit_length()
             return f"{prefix}{bits}"
-        elif bits == 1:
+        if bits == 1:
             return "bool"
-        elif bits < 8:
+        if bits < 8:
             return f"{prefix}8"
-        elif bits > 64:
-            if not dtype.is_signed() or dtype.is_raw():
-                return "BigUint"
-            else:
-                return "BigInt"
-        else:
-            raise ValueError(f"Unsupported data type: {dtype}")
+        if bits > 64:
+            return 'BigUint' if not dtype.is_signed() or dtype.is_raw() else 'BigInt'
+        raise ValueError(f"Unsupported data type: {dtype}")
 
     if dtype.is_module():
         return "Box<EventKind>"
-    elif dtype.is_array():
+    if dtype.is_array():
         elem_ty = dtype_to_rust_type(dtype.element_type())
         size = dtype.get_size()
         return f"[{elem_ty}; {size}]"
-    else:
-        raise ValueError(f"Unsupported data type: {dtype}")
+    raise ValueError(f"Unsupported data type: {dtype}")
 
 
 def int_imm_dumper_impl(ty: DType, value: int) -> str:
@@ -75,9 +70,9 @@ def int_imm_dumper_impl(ty: DType, value: int) -> str:
 
     if ty.get_bits() <= 64:
         return f"{value}{dtype_to_rust_type(ty)}"
-    else:
-        scalar_ty = "i64" if ty.is_signed() else "u64"
-        return f"ValueCastTo::<{dtype_to_rust_type(ty)}>::cast(&({value} as {scalar_ty}))"
+
+    scalar_ty = "i64" if ty.is_signed() else "u64"
+    return f"ValueCastTo::<{dtype_to_rust_type(ty)}>::cast(&({value} as {scalar_ty}))"
 
 
 def fifo_name(fifo):

@@ -3,4 +3,3 @@
 from . import frontend
 from . import utils
 from . import backend
-from . import simulator

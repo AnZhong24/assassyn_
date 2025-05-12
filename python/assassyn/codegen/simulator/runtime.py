@@ -210,7 +210,8 @@ pub trait ValueCastTo<T> {
     """)
 
     # Generate type casting implementations
-    fd.write("impl ValueCastTo<bool> for bool { fn cast(&self) -> bool { self.clone() } }\n")
+    fd.write("impl ValueCastTo<bool> for bool { " +
+              "fn cast(&self) -> bool { self.clone() } }\n")
 
     bigints = ["BigInt", "BigUint"]
     for i in range(2):
@@ -218,20 +219,31 @@ pub trait ValueCastTo<T> {
         other = bigints[1 - i]
 
         # Self cast
-        fd.write(f"impl ValueCastTo<{bigint}> for {bigint} {{ fn cast(&self) -> {bigint} {{ self.clone() }} }}\n")
+        fd.write(f"impl ValueCastTo<{bigint}> for {bigint} {{ " +
+                  f"fn cast(&self) -> {bigint} {{ self.clone() }} }}\n")
 
         # Cross cast between BigInt and BigUint
-        fd.write(f"""impl ValueCastTo<{other}> for {bigint} {{ fn cast(&self) -> {other} {{ self.to_{other.lower()}().unwrap() }} }}\n""")
+        fd.write(f"""impl ValueCastTo<{other}> for {bigint} {{
+          fn cast(&self) -> {other} {{ self.to_{other.lower()}().unwrap() }}
+        }}\n""")
 
         # Bool to BigInt/BigUint
-        fd.write(f"""impl ValueCastTo<{bigint}> for bool {{ fn cast(&self) -> {bigint} {{
-          if *self {{ 1.to_{bigint.lower()}().unwrap() }} else {{ 0.to_{bigint.lower()}().unwrap() }}
-        }} }}\n""")
+        fd.write(f"""impl ValueCastTo<{bigint}> for bool {{
+          fn cast(&self) -> {bigint} {{
+            if *self {{
+              1.to_{bigint.lower()}().unwrap()
+            }} else {{
+              0.to_{bigint.lower()}().unwrap()
+            }}
+          }}
+        }}\n""")
 
         # BigInt/BigUint to bool
-        fd.write(f"""impl ValueCastTo<bool> for {bigint} {{ fn cast(&self) -> bool {{
-          !self.eq(&0.to_{bigint.lower()}().unwrap())
-        }} }}\n""")
+        fd.write(f"""impl ValueCastTo<bool> for {bigint} {{
+          fn cast(&self) -> bool {{
+            !self.eq(&0.to_{bigint.lower()}().unwrap())
+          }}
+        }}\n""")
 
     # Generate integer casting implementations
     for sign_i in range(2):
@@ -239,16 +251,21 @@ pub trait ValueCastTo<T> {
             src_ty = f"{'ui'[sign_i]}{1 << i}"
 
             # To bool
-            fd.write(f"impl ValueCastTo<bool> for {src_ty} {{ fn cast(&self) -> bool {{ *self != 0 }} }}\n")
+            fd.write("impl ValueCastTo<bool> for {src_ty} {{ " +
+                      "fn cast(&self) -> bool {{ *self != 0 }} }}\n")
 
             # From bool
             fd.write(f"""impl ValueCastTo<{src_ty}> for bool {{
-                fn cast(&self) -> {src_ty} {{ if *self {{ 1 }} else {{ 0 }} }}
+                fn cast(&self) -> {src_ty} {{
+                  if *self {{ 1 }} else {{ 0 }}
+                }}
               }}\n""")
 
             # To BigInt/BigUint
             for bigint in bigints:
-                fd.write(f"""impl ValueCastTo<{bigint}> for {src_ty} {{ fn cast(&self) -> {bigint} {{ self.to_{bigint.lower()}().unwrap() }} }}\n""")
+                fd.write(f"""impl ValueCastTo<{bigint}> for {src_ty} {{
+                  fn cast(&self) -> {bigint} {{ self.to_{bigint.lower()}().unwrap() }}
+                }}\n""")
 
             # From BigInt
             fd.write(f"""impl ValueCastTo<{src_ty}> for BigInt {{
@@ -259,7 +276,8 @@ pub trait ValueCastTo<T> {
                   }}
                   match sign {{
                     num_bigint::Sign::Plus => data[0] as {src_ty},
-                    num_bigint::Sign::Minus => ((!data[0] + 1) & ({src_ty}::MAX as u64)) as {src_ty},
+                    num_bigint::Sign::Minus =>
+                      ((!data[0] + 1) & ({src_ty}::MAX as u64)) as {src_ty},
                     num_bigint::Sign::NoSign => data[0] as {src_ty},
                   }}
                 }}
@@ -284,10 +302,12 @@ pub trait ValueCastTo<T> {
 
                     if i == j and sign_i == sign_j:
                         # Self cast
-                        fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ fn cast(&self) -> {dst_ty} {{ self.clone() }} }}\n")
+                        fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ " +
+                                  f"fn cast(&self) -> {dst_ty} {{ self.clone() }} }}\n")
                     else:
                         # Cross cast
-                        fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ fn cast(&self) -> {dst_ty} {{ *self as {dst_ty} }} }}\n")
+                        fd.write(f"impl ValueCastTo<{dst_ty}> for {src_ty} {{ " +
+                                  f"fn cast(&self) -> {dst_ty} {{ *self as {dst_ty} }} }}\n")
 
     # End file with newline
     fd.write("\n")

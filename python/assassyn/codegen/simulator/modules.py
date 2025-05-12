@@ -38,20 +38,20 @@ class ElaborateModule(Visitor):
         self.module_name = ""
         self.module_ctx = None
 
-    def visit_module(self, module):
+    def visit_module(self, node):
         """Visit a module and generate its implementation."""
-        self.module_name = module.get_name()
-        self.module_ctx = module
+        self.module_name = node.get_name()
+        self.module_ctx = node
 
         # Create function header
-        result = [f"\n// Elaborating module {namify(module.get_name())}"]
-        result.append(f"pub fn {namify(module.get_name())}(sim: &mut Simulator) -> bool {{")
+        result = [f"\n// Elaborating module {namify(node.get_name())}"]
+        result.append(f"pub fn {namify(node.get_name())}(sim: &mut Simulator) -> bool {{")
 
         # Increase indentation for function body
         self.indent += 2
 
         # Visit the module body
-        body = self.visit_block(module.get_body())
+        body = self.visit_block(node.get_body())
         result.append(body)
 
         # Decrease indentation and add function closing
@@ -60,24 +60,25 @@ class ElaborateModule(Visitor):
 
         return "\n".join(result)
 
-    def visit_expr(self, expr):
+    def visit_expr( # pylint: disable=too-many-branches, too-many-statements, too-many-locals
+            self, node):
         """Visit an expression and generate its implementation."""
         # Determine if the expression produces a value and if it needs exposure
         id_and_exposure = None
-        if expr.get_opcode().is_valued():
-            need_exposure = externally_used_combinational(expr)
-            id_expr = namify(expr.to_string())
+        if node.get_opcode().is_valued():
+            need_exposure = externally_used_combinational(node)
+            id_expr = namify(node.to_string())
             id_and_exposure = (id_expr, need_exposure)
 
         # Handle different expression types
         open_scope = False
         code = []
 
-        if isinstance(expr, BinaryOp):
-            binop = BinaryOp.OPERATORS[expr.opcode]
-            rust_ty = dtype_to_rust_type(expr.get_dtype())
-            lhs = dump_rval_ref(self.module_ctx, self.sys, expr.a)
-            rhs = dump_rval_ref(self.module_ctx, self.sys, expr.b)
+        if isinstance(node, BinaryOp):
+            binop = BinaryOp.OPERATORS[node.opcode]
+            rust_ty = dtype_to_rust_type(node.get_dtype())
+            lhs = dump_rval_ref(self.module_ctx, self.sys, node.a)
+            rhs = dump_rval_ref(self.module_ctx, self.sys, node.b)
             # Special handling for shift operations
             if binop in [BinaryOp.SHL, BinaryOp.SHR]:
                 rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
@@ -86,21 +87,21 @@ class ElaborateModule(Visitor):
 
             code.append(f"{lhs} {binop} {rhs}")
 
-        elif isinstance(expr, UnaryOp):
-            operand = dump_rval_ref(self.module_ctx, self.sys, expr.x)
-            code.append(f"{unary.get_opcode()}{operand}")
+        elif isinstance(node, UnaryOp):
+            operand = dump_rval_ref(self.module_ctx, self.sys, node.x)
+            code.append(f"{node.get_opcode()}{operand}")
 
-        elif isinstance(expr, ArrayRead):
-            array = expr.arr
-            idx = expr.idx
+        elif isinstance(node, ArrayRead):
+            array = node.arr
+            idx = node.idx
             array_name = namify(array.get_name())
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
             code.append(f"sim.{array_name}.payload[{idx_val} as usize].clone()")
 
-        elif isinstance(expr, ArrayWrite):
-            array = expr.arr
-            idx = expr.idx
-            value = expr.value
+        elif isinstance(node, ArrayWrite):
+            array = node.arr
+            idx = node.idx
+            value = node.value
 
             array_name = namify(array.get_name())
             idx_val = dump_rval_ref(self.module_ctx, self.sys, idx)
@@ -113,9 +114,9 @@ class ElaborateModule(Visitor):
                 ArrayWrite::new(stamp, {idx_val} as usize, {value_val}.clone(), "{module_writer}"));
             }}""")
 
-        elif isinstance(expr, AsyncCall):
+        elif isinstance(node, AsyncCall):
 
-            bind = expr.bind
+            bind = node.bind
 
             event_q = f"{namify(bind.callee.get_name())}_event"
 
@@ -124,8 +125,8 @@ class ElaborateModule(Visitor):
               sim.{event_q}.push_back(stamp)
             }}""")
 
-        elif isinstance(expr, FIFOPop):
-            fifo = expr.fifo
+        elif isinstance(node, FIFOPop):
+            fifo = node.fifo
             fifo_id = fifo_name(fifo)
             module_name = self.module_name
 
@@ -135,31 +136,31 @@ class ElaborateModule(Visitor):
               sim.{fifo_id}.payload.front().unwrap().clone()
             }}""")
 
-        elif isinstance(expr, PureIntrinsic):
+        elif isinstance(node, PureIntrinsic):
 
-            intrinsic = expr.opcode
+            intrinsic = node.opcode
 
             if intrinsic == PureIntrinsic.FIFO_PEEK:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, call.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
                 code.append(f"sim.{port_self}.front().cloned()")
 
             elif intrinsic == PureIntrinsic.FIFO_VALID:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, call.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
                 code.append(f"!sim.{port_self}.is_empty()")
 
             elif intrinsic == PureIntrinsic.VALUE_VALID:
-                value = call.get_operand_value(0)
+                value = node.get_operand_value(0)
                 value_expr = value.as_expr()
                 code.append(f"sim.{namify(value_expr.get_name())}_value.is_some()")
 
             elif intrinsic == PureIntrinsic.MODULE_TRIGGERED:
-                port_self = dump_rval_ref(self.module_ctx, self.sys, call.get_operand_value(0))
+                port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand_value(0))
                 code.append(f"sim.{port_self}_triggered")
 
-        elif isinstance(expr, FIFOPush):
-            fifo = expr.fifo
+        elif isinstance(node, FIFOPush):
+            fifo = node.fifo
             fifo_id = fifo_name(fifo)
-            value = dump_rval_ref(self.module_ctx, self.sys, expr.value)
+            value = dump_rval_ref(self.module_ctx, self.sys, node.value)
             module_writer = self.module_name
 
             code.append(f"""{{
@@ -168,12 +169,12 @@ class ElaborateModule(Visitor):
                 FIFOPush::new(stamp + 50, {value}.clone(), "{module_writer}"));
             }}""")
 
-        elif isinstance(expr, Log):
+        elif isinstance(node, Log):
             mn = self.module_name
             result = [f'print!("@line:{{:<5}} {{:<10}}: [{mn}]\\t", line!(), cyclize(sim.stamp));']
             result.append("println!(")
 
-            for elem in expr.operand_iter():
+            for elem in node.operand_iter():
                 dump = dump_rval_ref(self.module_ctx, self.sys, elem.get_value())
 
                 # Special handling for boolean display
@@ -185,11 +186,11 @@ class ElaborateModule(Visitor):
             result.append(")")
             code.append("".join(result))
 
-        elif isinstance(expr, Slice):
-            a = dump_rval_ref(self.module_ctx, self.sys, expr.x)
-            l = expr.l
-            r = expr.r
-            dtype = expr.get_dtype()
+        elif isinstance(node, Slice):
+            a = dump_rval_ref(self.module_ctx, self.sys, node.x)
+            l = node.l
+            r = node.r
+            dtype = node.get_dtype()
             mask_bits = "1" * (r - l + 1)
 
             if l < 64 and r < 64:
@@ -205,11 +206,11 @@ let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
                 ValueCastTo::<{dtype_to_rust_type(dtype)}>::cast(&res)
             }}""")
 
-        elif isinstance(expr, Concat):
-            dtype = expr.get_dtype()
-            a = dump_rval_ref(self.module_ctx, self.sys, expr.msb)
-            b = dump_rval_ref(self.module_ctx, self.sys, expr.lsb)
-            b_bits = expr.lsb.get_dtype().get_bits()
+        elif isinstance(node, Concat):
+            dtype = node.get_dtype()
+            a = dump_rval_ref(self.module_ctx, self.sys, node.msb)
+            b = dump_rval_ref(self.module_ctx, self.sys, node.lsb)
+            b_bits = node.lsb.get_dtype().get_bits()
 
             code.append(f"""{{
                 let a = ValueCastTo::<BigUint>::cast(&{a});
@@ -218,20 +219,20 @@ let mask = BigUint::parse_bytes("{mask_bits}".as_bytes(), 2).unwrap();'''
                 ValueCastTo::<{dtype_to_rust_type(dtype)}>::cast(&c)
             }}""")
 
-        elif isinstance(expr, Select):
-            cond = dump_rval_ref(self.module_ctx, self.sys, expr.cond)
-            true_value = dump_rval_ref(self.module_ctx, self.sys, expr.true_value)
-            false_value = dump_rval_ref(self.module_ctx, self.sys, expr.false_value)
+        elif isinstance(node, Select):
+            cond = dump_rval_ref(self.module_ctx, self.sys, node.cond)
+            true_value = dump_rval_ref(self.module_ctx, self.sys, node.true_value)
+            false_value = dump_rval_ref(self.module_ctx, self.sys, node.false_value)
 
             code.append(f"if {cond} {{ {true_value} }} else {{ {false_value} }}")
 
-        elif isinstance(expr, Select1Hot):
-            cond = dump_rval_ref(self.module_ctx, self.sys, expr.cond)
+        elif isinstance(node, Select1Hot):
+            cond = dump_rval_ref(self.module_ctx, self.sys, node.cond)
 
             result = [f'''{{ let cond = {cond};
 assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
-            for i, value in enumerate(expr.values):
+            for i, value in enumerate(node.values):
                 if i != 0:
                     result.append(" else ")
 
@@ -241,37 +242,37 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
             result.append(" else { unreachable!() } }")
             code.append("".join(result))
 
-        elif isinstance(expr, Cast):
-            dest_dtype = expr.dest_type
-            a = dump_rval_ref(self.module_ctx, self.sys, expr.x)
+        elif isinstance(node, Cast):
+            dest_dtype = node.dest_type
+            a = dump_rval_ref(self.module_ctx, self.sys, node.x)
 
-            if expr.subcode in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
+            if node.subcode in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
                 code.append(f"ValueCastTo::<{dtype_to_rust_type(dest_dtype)}>::cast(&{a})")
 
-        elif isinstance(expr, Bind):
+        elif isinstance(node, Bind):
             code.append("()")
 
-        elif isinstance(expr, Intrinsic):
-            intrinsic = expr.opcode
+        elif isinstance(node, Intrinsic):
+            intrinsic = node.opcode
 
             if  intrinsic == Intrinsic.WAIT_UNTIL:
-                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+                value = dump_rval_ref(self.module_ctx, self.sys, node.args[0])
                 code.append(f"if !{value} {{ return false; }}")
 
-            elif intrinsic == Intrinsic.CONDITION:
-                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
-                open_scope = True
-                code.append(f"if {value} {{")
+            # elif intrinsic == Intrinsic.CONDITION:
+            #     value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+            #     open_scope = True
+            #     code.append(f"if {value} {{")
 
-            elif intrinsic == BlockIntrinsic.FINISH:
+            elif intrinsic == Intrinsic.FINISH:
                 code.append("std::process::exit(0);")
 
-            elif intrinsic == BlockIntrinsic.ASSERT:
-                value = dump_rval_ref(self.module_ctx, self.sys, expr.args[0])
+            elif intrinsic == Intrinsic.ASSERT:
+                value = dump_rval_ref(self.module_ctx, self.sys, node.args[0])
                 code.append(f"assert!({value});")
 
-            elif intrinsic == BlockIntrinsic.BARRIER:
-                code.append(f"/* Barrier */")
+            elif intrinsic == Intrinsic.BARRIER:
+                code.append("/* Barrier */")
 
         # Format the result with proper indentation and variable assignment
         indent_str = " " * self.indent
@@ -298,9 +299,11 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
     def visit_int_imm(self, int_imm):
         """Visit an integer immediate value."""
-        return f"ValueCastTo::<{dtype_to_rust_type(int_imm.get_dtype())}>::cast(&{int_imm.get_value()})"
+        ty = dump_rval_ref(self.module_ctx, self.sys, int_imm.get_type())
+        value = int_imm.get_value()
+        return f"ValueCastTo::<{ty}>::cast(&{value})"
 
-    def visit_block(self, block):
+    def visit_block(self, node):
         """Visit a block and generate its implementation."""
         result = []
 
@@ -308,7 +311,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
         restore_indent = self.indent
 
         # Visit each element in the block
-        for elem in block.body_iter():
+        for elem in node.body_iter():
             if isinstance(elem, Expr):
                 result.append(self.visit_expr(elem))
             elif isinstance(elem, Block):
@@ -322,7 +325,7 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
             result.append(f"{' ' * self.indent}}}\n")
 
         # Handle block value if present
-        if block.get_value():
+        if node.get_value():
             return f"{{ {''.join(result)} }}"
 
         return "".join(result)

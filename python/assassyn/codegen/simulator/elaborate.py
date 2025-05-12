@@ -52,7 +52,7 @@ def elaborate_impl(sys, config):
 
     # Create Cargo.toml
     manifest_path = simulator_path / "Cargo.toml"
-    with open(manifest_path, 'w') as cargo:
+    with open(manifest_path, 'w', encoding="utf-8") as cargo:
         cargo.write("[package]\n")
         cargo.write(f'name = "{sys.name}_simulator"\n')
         cargo.write('version = "0.1.0"\n')
@@ -78,19 +78,19 @@ def elaborate_impl(sys, config):
         shutil.copy(rustfmt_src, simulator_path / "rustfmt.toml")
 
     # Generate modules.rs
-    with open(simulator_path / "src/modules.rs", 'w') as fd:
+    with open(simulator_path / "src/modules.rs", 'w', encoding="utf-8") as fd:
         dump_modules(sys, fd)
 
     # Generate runtime.rs
-    with open(simulator_path / "src/runtime.rs", 'w') as fd:
+    with open(simulator_path / "src/runtime.rs", 'w', encoding='utf-8') as fd:
         dump_runtime(fd)
 
     # Generate simulator.rs
-    with open(simulator_path / "src/simulator.rs", 'w') as fd:
+    with open(simulator_path / "src/simulator.rs", 'w', encoding='utf-8') as fd:
         dump_simulator(sys, config, fd)
 
     # Generate main.rs
-    with open(simulator_path / "src/main.rs", 'w') as fd:
+    with open(simulator_path / "src/main.rs", 'w', encoding='utf-8') as fd:
         dump_main(fd)
 
     return manifest_path

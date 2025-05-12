@@ -8,7 +8,8 @@ from ...block import Block
 from ...expr import Expr
 
 
-def dump_simulator(sys, config, fd):
+def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements
+        sys, config, fd):
     """Generate the simulator module.
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
@@ -116,7 +117,7 @@ def dump_simulator(sys, config, fd):
     fd.write("  }\n\n")
 
     # Critical path analysis
-    # TODO: Implement critical path analysis equivalent to Rust
+    # TODO(@derui): Implement critical path analysis equivalent to Rust
 
     # Get topological order for downstream modules
     downstreams = analyze_topological_order(sys)
@@ -215,9 +216,9 @@ def dump_simulator(sys, config, fd):
         cycles = []
 
         # Collect cycles from testbench blocks
-        for node in testbench.get_body().body_iter():
-            if isinstance(node, Block):
-                if node.get_cycle() is not None:
+        for block in testbench.get_body().body_iter():
+            if isinstance(block, Block):
+                if block.get_cycle() is not None:
                     cycles.append(block.get_cycle())
 
         if cycles:
