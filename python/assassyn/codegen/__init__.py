@@ -21,5 +21,3 @@ from .impl import (
     CG_MIDFIX,
     CG_SIMULATOR
 )
-
-from .simulator.elaborate import elaborate

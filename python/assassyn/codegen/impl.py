@@ -145,7 +145,8 @@ class CodeGen(visitor.Visitor):
     code: list  # List of code lines to be generated
     header: list  # List of header lines to be generated
     emitted_bind: set  # Set of emitted binds
-    targets: dict  # Target backends for code generation
+    simulator: bool  # Whether to generate a simulator
+    verilog: str  # Verilog simulator target
     resource_base: str  # Base directory for resources
     idle_threshold: int  # Idle threshold parameter
     sim_threshold: int  # Simulation threshold parameter
@@ -191,13 +192,15 @@ class CodeGen(visitor.Visitor):
         '''Emit the configuration fed to the generated simulator'''
         idle_threshold = f'idle_threshold: {self.idle_threshold}'
         sim_threshold = f'sim_threshold: {self.sim_threshold}'
-        random_option = f'random: {self.random}'
+        random_dump = 'true' if self.random else 'false'
+        random_option = f'random: {random_dump}'
         config = [idle_threshold, sim_threshold, random_option]
         if self.resource_base is not None:
             resource_base = f'resource_base: PathBuf::from("{self.resource_base}")'
             config.append(resource_base)
-        if 'verilog' in self.targets:
-            verilog_target = self.targets['verilog']
+
+        if self.verilog:
+            verilog_target = self.verilog
             simulator = f'assassyn::backend::verilog::Simulator::{CG_SIMULATOR[verilog_target]}'
             config.append(f'verilog: {simulator}')
             config.append(f'fifo_depth: {self.default_fifo_depth}')
@@ -295,11 +298,11 @@ class CodeGen(visitor.Visitor):
         config = 'assassyn::xform::Config{ rewrite_wait_until: true }'
         self.code.append(f'  assassyn::xform::basic(&mut sys, &{config});')
         backend = 'assassyn::backend'
-        if self.targets['simulator']:
+        if self.simulator:
             base_dir = '(env!("CARGO_MANIFEST_DIR").to_string()).into()'
             self.code.append(f'  config.base_dir = {base_dir};')
             self.code.append(f'  {backend}::simulator::elaborate(&sys, &config).unwrap();')
-        if 'verilog' in self.targets:
+        if self.verilog:
             base_dir = '(env!("CARGO_MANIFEST_DIR").to_string()).into()'
             self.code.append(f'  config.base_dir = {base_dir};')
             self.code.append(f'  {backend}::verilog::elaborate(&sys, &config).unwrap();')
@@ -488,12 +491,9 @@ class CodeGen(visitor.Visitor):
         self.code = []
         self.header = []
         self.emitted_bind = set()
-        self.targets = {}
         self.resource_base = resource_base
-        if simulator:
-            self.targets['simulator'] = True
-        if verilog:
-            self.targets['verilog'] = verilog
+        self.simulator = simulator
+        self.verilog = verilog
         self.idle_threshold = idle_threshold
         self.sim_threshold = sim_threshold
         self.random = random
@@ -515,27 +515,35 @@ class CodeGen(visitor.Visitor):
             '''
             self.code.append(res)
 
-def codegen( #pylint: disable=too-many-arguments
-        sys: SysBuilder,
-        simulator,
-        verilog,
-        idle_threshold,
-        sim_threshold,
-        random,
-        resource_base,
-        fifo_depth):
+def codegen(sys: SysBuilder, **kwargs):
     '''
     The help function to generate the assassyn IR builder for the given system
 
     Args:
         sys (SysBuilder): The system to generate the builder for
-        kwargs: Additional arguments to pass to the code
+        simulator: Whether to generate a simulator
+        verilog: Verilog simulator target (if any)
+        idle_threshold: Idle threshold for the simulator
+        sim_threshold: Simulation threshold
+        random: Whether to randomize module execution order
+        resource_base: Path to resource files
+        fifo_depth: Default FIFO depth
     '''
-    cg = CodeGen(simulator, verilog, idle_threshold, sim_threshold,
-                 random, resource_base , fifo_depth)
+    # Create a CodeGen object but exclude simulator generation flag
+    # We'll handle simulator generation separately using the Python implementation
+    cg = CodeGen(False,
+                 kwargs['verilog'],
+                 kwargs['idle_threshold'],
+                 kwargs['sim_threshold'],
+                 kwargs['random'],
+                 kwargs['resource_base'],
+                 kwargs['fifo_depth'])
     cg.visit_system(sys)
 
-    print('Start simulator in-python elaboration')
-    elaborate(sys)
+    simulator_manifest = None
+    # If simulator flag is set, use the Python implementation to generate it
+    if kwargs['simulator']:
+        print('Start simulator in-python elaboration')
+        simulator_manifest = elaborate(sys, **kwargs)
 
-    return cg.get_source()
+    return cg.get_source(), simulator_manifest

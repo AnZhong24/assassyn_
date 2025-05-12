@@ -64,19 +64,8 @@ def make_existing_dir(path):
     except Exception as e:
         raise e
 
-def elaborate( # pylint: disable=too-many-arguments
-               # pylint: disable=too-many-locals
-        sys: SysBuilder,
-        path=tempfile.gettempdir(),
-        resource_base=None,
-        pretty_printer=True,
-        verbose=True,
-        simulator=True,
-        verilog=False,
-        idle_threshold=100,
-        sim_threshold=100,
-        fifo_depth=4,
-        random=False):
+def elaborate(# pylint: disable=too-many-locals
+        sys: SysBuilder, **kwargs):
     '''
     Invoke the elaboration process of the given system.
 
@@ -92,8 +81,18 @@ def elaborate( # pylint: disable=too-many-arguments
         **kwargs: The optional arguments that will be passed to the code generator.
     '''
 
-    if verbose:
+    if kwargs['verbose']:
         print(sys)
+
+    real_config = config()
+
+    for k, v in kwargs.items():
+        if k not in real_config:
+            raise ValueError(f'Invalid config key: {k}')
+        real_config[k] = v
+
+    path = real_config['path']
+    verilog = real_config['verilog']
 
     sys_dir = os.path.join(path, sys.name)
 
@@ -103,26 +102,18 @@ def elaborate( # pylint: disable=too-many-arguments
     toml = dump_cargo_toml(sys_dir, sys.name)
     # Dump the src directory
     make_existing_dir(os.path.join(sys_dir, 'src'))
+
+    simulator_manifest = None
     # Dump the assassyn IR builder
     with open(os.path.join(sys_dir, 'src/main.rs'), 'w', encoding='utf-8') as fd:
-        random_sims = "false"
-        if random:
-            random_sims = "true"
-        raw = codegen.codegen(
-            sys, simulator, verilog,
-            idle_threshold, sim_threshold, random_sims,
-            resource_base, fifo_depth
-        )
+        raw, simulator_manifest = codegen.codegen(sys, **real_config)
         fd.write(raw)
-    if pretty_printer:
+    if real_config['pretty_printer']:
         subprocess.run(['cargo', 'fmt', '--manifest-path', toml], cwd=sys_dir, check=True)
     subprocess.run(['cargo', 'run', '--release'], cwd=sys_dir, check=True)
 
-    simulator_path = None
     verilog_path = None
-    if simulator:
-        simulator_path = os.path.join(sys_dir, f'{sys.name}_simulator')
     if verilog:
         verilog_path = os.path.join(sys_dir, f'{sys.name}_verilog')
 
-    return [simulator_path, verilog_path]
+    return [simulator_manifest, verilog_path]

@@ -15,6 +15,16 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     """Generate the simulator module.
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
+
+    Args:
+        sys: The Assassyn system builder
+        config: Configuration dictionary with the following keys:
+            - idle_threshold: Idle threshold for the simulator
+            - sim_threshold: Maximum number of simulation cycles
+            - random: Whether to randomize module execution order
+            - resource_base: Path to resource files
+            - fifo_depth: Default FIFO depth
+        fd: File descriptor to write to
     """
     # Write imports
     fd.write("use std::collections::VecDeque;\n")
@@ -201,11 +211,12 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         array_name = namify(array.name)
         fd.write(f'  load_hex_file(&mut sim.{array_name}.payload, "{init_file_path}");\n')
 
-    # Set simulation threshold
+    # Set simulation threshold and other parameters
     sim_threshold = config.get('sim_threshold', 100)
 
     # Add initial events for driver if present
-    fd.write(f"""
+    if sys.has_module("Driver") is not None:
+        fd.write(f"""
         for i in 1..={sim_threshold} {{ sim.Driver_event.push_back(i * 100); }} """)
 
     # Add initial events for testbench if present
@@ -232,7 +243,15 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     if config.get('random', False):
         randomization = "    simulators.shuffle(&mut rng);\n"
 
+    # Get idle threshold parameter
+    idle_threshold = config.get('idle_threshold', 5)
+
+    # Add idle threshold check
+    any_module_triggered = 'let any_module_triggered =' + \
+                           ' || '.join([f"sim.{namify(m.name)}_triggered" for m in sys.modules])
+
     fd.write(f"""
+      let mut idle_count = 0;
       for i in 1..={sim_threshold} {{
         sim.stamp = i * 100;
         sim.reset_downstream();
@@ -240,9 +259,24 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         for simulate in simulators.iter() {{
           simulate(&mut sim);
         }}
+
         for simulate in downstreams.iter() {{
           simulate(&mut sim);
         }}
+
+        {any_module_triggered};
+
+        // Handle idle threshold
+        if !any_module_triggered {{
+          idle_count += 1;
+          if idle_count >= {idle_threshold} {{
+            println!("Simulation stopped due to reaching idle threshold of {idle_threshold}");
+            break;
+          }}
+        }} else {{
+          idle_count = 0;
+        }}
+
         sim.stamp += 50;
         sim.tick_registers();
       }}

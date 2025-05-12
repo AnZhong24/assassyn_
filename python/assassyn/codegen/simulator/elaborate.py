@@ -111,33 +111,14 @@ def elaborate(sys, **config):
 
     Args:
         sys: The Assassyn system builder
-        **config: Configuration options, including:
-            - path: Output directory (default: current directory)
-            - dirname: Name of the simulator directory (default: {sys.name}_simulator)
-            - override_dump: Whether to override existing files (default: True)
-            - resource_base: Path to resource files
-            - sim_threshold: Maximum number of simulation cycles (default: 100)
-            - random: Whether to randomize module execution order (default: False)
+        **config: Refer to ..codegen for the list of options
 
     Returns:
         Path to the generated Cargo.toml file
     """
-    # Create a default configuration
-    default_config = {
-        'path': os.getcwd(),
-        'dirname': f"{sys.name}_simulator",
-        'override_dump': True,
-        'resource_base': None,
-        'sim_threshold': 100,
-        'random': False
-    }
-
-    # Merge with provided config
-    for key, value in config.items():
-        default_config[key] = value
 
     # Generate the simulator
-    manifest_path = elaborate_impl(sys, default_config)
+    manifest_path = elaborate_impl(sys, config)
 
     # Format the code if cargo fmt is available
     try:

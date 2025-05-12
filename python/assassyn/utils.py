@@ -28,16 +28,14 @@ def package_path():
 def _cmd_wrapper(cmd):
     return subprocess.check_output(cmd).decode('utf-8')
 
-
-def run_simulator(path, count_time=False):
+def run_simulator(manifest_path, offline=False, release=True):
     '''The helper function to run the simulator'''
-    cmd = ['cargo', 'build', '--manifest-path', path + '/Cargo.toml', '--release', '--offline']
-    _cmd_wrapper(cmd)
-    cmd = ['cargo', 'run', '--manifest-path', path + '/Cargo.toml', '--release', '--offline']
+    cmd = ['cargo', 'run', '--manifest-path', manifest_path]
+    if offline:
+        cmd += ['--offline']
+    if release:
+        cmd += ['--release']
     res = _cmd_wrapper(cmd)
-    if count_time:
-        a = timeit.timeit(lambda: _cmd_wrapper(cmd), number=5)
-        return (res, a)
     return res
 
 def run_verilator(path, count_time=False):
