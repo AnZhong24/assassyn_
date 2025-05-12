@@ -87,11 +87,8 @@ class ElaborateModule(Visitor):
             lhs = dump_rval_ref(self.module_ctx, self.sys, node.lhs)
             rhs = dump_rval_ref(self.module_ctx, self.sys, node.rhs)
             # Special handling for shift operations
-            if binop in [BinaryOp.SHL, BinaryOp.SHR]:
-                rhs = f"ValueCastTo::<u64>::cast(&{rhs})"
-            else:
-                rhs = f"ValueCastTo::<{rust_ty}>::cast(&{rhs})"
-
+            lhs = f"ValueCastTo::<{rust_ty}>::cast(&{lhs})"
+            rhs = f"ValueCastTo::<{rust_ty}>::cast(&{rhs})"
             code.append(f"{lhs} {binop} {rhs}")
 
         elif isinstance(node, UnaryOp):

@@ -15,7 +15,6 @@ from .base import ModuleBase
 if typing.TYPE_CHECKING:
     from ..dtype import DType
     from ..value import Value
-    from ..expr import Operand
 
 def _reserved_module_name(name):
     return name in ['Driver', 'Testbench']
@@ -99,6 +98,7 @@ class Module(ModuleBase):
 
     @property
     def externals(self):
+        '''Expose the external interfaces of this module.'''
         return self._externals
 
     @property

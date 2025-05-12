@@ -67,10 +67,10 @@ def int_imm_dumper_impl(ty: DType, value: int) -> str:
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
     """
-    if ty.get_bits() == 1:
+    if ty.bits == 1:
         return "true" if value != 0 else "false"
 
-    if ty.get_bits() <= 64:
+    if ty.bits <= 64:
         return f"{value}{dtype_to_rust_type(ty)}"
 
     scalar_ty = "i64" if ty.is_signed() else "u64"

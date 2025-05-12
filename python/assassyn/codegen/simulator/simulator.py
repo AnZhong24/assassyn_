@@ -197,7 +197,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     # Initialize memory from files if needed
     for sram in [m for m in sys.modules if isinstance(m, SRAM)]:
         init_file_path = os.path.join(config.get('resource_base', '.'), sram.init_file)
-        array = sram.payload 
+        array = sram.payload
         array_name = namify(array.name)
         fd.write(f'  load_hex_file(&mut sim.{array_name}.payload, "{init_file_path}");\n')
 

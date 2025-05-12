@@ -535,6 +535,7 @@ def codegen( #pylint: disable=too-many-arguments
                  random, resource_base , fifo_depth)
     cg.visit_system(sys)
 
+    print('Start simulator in-python elaboration')
     elaborate(sys)
 
     return cg.get_source()

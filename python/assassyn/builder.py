@@ -79,6 +79,7 @@ class SysBuilder:
         self._ctx_stack[ty].pop()
 
     def has_driver(self):
+        '''Check if the system has a driver module.'''
         for i in self.modules:
             if i.__class__.__name__ == 'Driver':
                 return True

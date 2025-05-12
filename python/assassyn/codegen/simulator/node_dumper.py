@@ -14,24 +14,24 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
 
     unwrapped = node.value if isinstance(node, Operand) else node
 
-    if isinstance(node, Array):
-        return namify(node.get_name())
+    if isinstance(unwrapped, Array):
+        return namify(unwrapped.name)
 
-    if isinstance(node, Port):
-        return fifo_name(node)
+    if isinstance(unwrapped, Port):
+        return fifo_name(unwrapped)
 
-    if isinstance(node, Const):
-        return int_imm_dumper_impl(node.get_dtype(), node.get_value())
+    if isinstance(unwrapped, Const):
+        return int_imm_dumper_impl(unwrapped.dtype, unwrapped.value)
 
-    if isinstance(node, Module):
-        return namify(node.get_name())
+    if isinstance(unwrapped, Module):
+        return namify(unwrapped.as_operand())
 
-    if isinstance(node, Expr):
+    if isinstance(unwrapped, Expr):
         # Figure out the ID format based on context
-        parent_block = node.get_parent()
-        if module_ctx != parent_block.get_module():
+        parent_block = unwrapped.parent
+        if module_ctx != parent_block.module:
             # Expression from another module
-            raw = namify(node.get_name())
+            raw = namify(unwrapped.as_operand())
             field_id = f"{raw}_value"
             panic_log = f"Value {raw} invalid!"
             return f"""if let Some(x) = &sim.{field_id} {{
@@ -39,17 +39,20 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
                       }} else {{
                         panic!("{panic_log}");
                       }}.clone()"""
-        if node.dtype().get_bits() <= 64:
-            # Simple value
-            return namify(node.get_name())
-        # Large value needs cloning
-        return f"{namify(node.get_name())}.clone()"
 
-    if isinstance(node, str):
-        return f'"{node}"'
+        ref = namify(unwrapped.as_operand())
+        if unwrapped.dtype.bits <= 64:
+            # Simple value
+            return namify(ref)
+
+        # Large value needs cloning
+        return f"{ref}.clone()"
+
+    if isinstance(unwrapped, str):
+        return f'"{unwrapped}"'
 
     # Default case
-    return namify(node.as_operand())
+    return namify(unwrapped.as_operand())
 
 
 def externally_used_combinational(expr: Expr) -> bool:

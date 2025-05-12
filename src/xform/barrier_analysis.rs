@@ -5,7 +5,7 @@ use crate::ir::node::ExprRef;
 use crate::ir::node::IsElement;
 use crate::ir::node::NodeKind;
 use crate::ir::node::Parented;
-use crate::ir::Block;
+// use crate::ir::Block;
 use crate::ir::DataType;
 use crate::ir::Expr;
 use crate::ir::IntImm;
@@ -89,26 +89,26 @@ impl<'sys> Visitor<()> for GatherModulesToCut<'sys> {
   }
 
   fn visit_expr(&mut self, expr: ExprRef<'_>) -> Option<()> {
-    println!("Expr: {:?}", expr.get_key());
+    // println!("Expr: {:?}", expr.get_key());
     match expr.get_opcode() {
       Opcode::BlockIntrinsic { intrinsic } => {
         if intrinsic == subcode::BlockIntrinsic::Barrier {
           self.has_barrier = true;
-          println!("Buffered expr: {:?}", expr.get_operand_value(0).as_ref().unwrap().get_key());
+          // println!("Buffered expr: {:?}", expr.get_operand_value(0).as_ref().unwrap().get_key());
         }
       }
       Opcode::FIFOPush => {
-        let parent_module = expr
-          .get_parent()
-          .as_ref::<Block>(self.sys)
-          .unwrap()
-          .get_module();
-        println!(
-          "----------Push expr_op0: {:?} , expr_op1: {:?} , Parent_module: {:?}",
-          expr.get_operand_value(0).as_ref().unwrap().get_key(),
-          expr.get_operand_value(1).as_ref().unwrap().get_key(),
-          parent_module.as_ref::<Module>(self.sys).unwrap().get_name()
-        );
+        // let parent_module = expr
+        //   .get_parent()
+        //   .as_ref::<Block>(self.sys)
+        //   .unwrap()
+        //   .get_module();
+        // println!(
+        //   "----------Push expr_op0: {:?} , expr_op1: {:?} , Parent_module: {:?}",
+        //   expr.get_operand_value(0).as_ref().unwrap().get_key(),
+        //   expr.get_operand_value(1).as_ref().unwrap().get_key(),
+        //   parent_module.as_ref::<Module>(self.sys).unwrap().get_name()
+        // );
       }
       _ => {}
     }

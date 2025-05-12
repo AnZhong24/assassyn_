@@ -156,7 +156,7 @@ class BinaryOp(Expr):
         # pylint: disable=import-outside-toplevel
         from ..dtype import Bits
         if self.opcode in [BinaryOp.ADD, BinaryOp.SUB, BinaryOp.DIV, BinaryOp.MOD]:
-            return Bits(self.lhs.dtype.bits)
+            return type(self.lhs.dtype)(self.lhs.dtype.bits)
         if self.opcode in [BinaryOp.MUL]:
             return Bits(self.lhs.dtype.bits + self.rhs.dtype.bits)
         if self.opcode in [BinaryOp.SHL, BinaryOp.SHR]:
