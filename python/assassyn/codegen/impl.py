@@ -10,7 +10,7 @@ from ..builder import SysBuilder
 from ..array import Array
 from ..module import Module, Port
 from ..block import Block
-from ..expr import Expr
+from ..expr import Expr, Operand
 from ..utils import identifierize
 #from .simulator import elaborate
 
@@ -337,24 +337,25 @@ class CodeGen(visitor.Visitor):
 
     def generate_rval(self, node):
         '''Generate the value reference on as the right-hand side of an assignment'''
-        if isinstance(node, const.Const):
-            ty = generate_dtype(node.dtype)
-            imm_var = f'imm_{identifierize(node)}'
-            imm_decl = f'  let {imm_var} = {const_int_wrapper(node.value, ty)}; // {node}'
+        unwrapped = node.value if isinstance(node, Operand) else node
+        if isinstance(unwrapped, const.Const):
+            ty = generate_dtype(unwrapped.dtype)
+            imm_var = f'imm_{identifierize(unwrapped)}'
+            imm_decl = f'  let {imm_var} = {const_int_wrapper(unwrapped.value, ty)}; // {unwrapped}'
             self.code.append(imm_decl)
             return imm_var
-        if isinstance(node, int):
-            return str(node)
-        if isinstance(node, module.Port):
-            module_name = self.generate_rval(node.module)
-            port_name = f'{module_name}_{node.name}'
-            self.code.append(f'''  // Get port {node.name}
+        if isinstance(unwrapped, int):
+            return str(unwrapped)
+        if isinstance(unwrapped, module.Port):
+            module_name = self.generate_rval(unwrapped.module)
+            port_name = f'{module_name}_{unwrapped.name}'
+            self.code.append(f'''  // Get port {unwrapped.name}
                 let {port_name} = {{
                   let module = {module_name}.as_ref::<assassyn::ir::Module>(&sys).unwrap();
-                  module.get_fifo("{node.name}").unwrap().upcast()
+                  module.get_fifo("{unwrapped.name}").unwrap().upcast()
                 }};''')
             return port_name
-        return node.as_operand()
+        return unwrapped.as_operand()
 
     #pylint: disable=too-many-branches, too-many-locals, too-many-statements
     def visit_expr(self, node):

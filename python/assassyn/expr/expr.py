@@ -23,12 +23,10 @@ class Operand:
     _user: Expr # The user of this operand
 
     def __init__(self, value: Value, user: Expr):
-        self.value = value
-        self.user = user
-
-    def as_operand(self):
-        '''Dump the operand as a string.'''
-        return self.value.as_operand()
+        self._value = value
+        self._user = user
+        if isinstance(value, Expr):
+            value.users.append(self)
 
     @property
     def value(self):
@@ -39,6 +37,10 @@ class Operand:
     def user(self):
         '''Get the user of this operand'''
         return self._user
+
+    def __getattr__(self, name):
+        '''Forward the attribute access to the value'''
+        return getattr(self.value, name)
 
 class Expr(Value):
     '''The frontend base node for expressions'''
@@ -55,7 +57,7 @@ class Expr(Value):
         '''Initialize the expression with an opcode'''
         self.opcode = opcode
         self.loc = self.parent = None
-        self._operands = operands
+        self._operands = [Operand(i, self) if isinstance(i, Value) else i for i in operands]
         self.users = []
 
     def as_operand(self):
