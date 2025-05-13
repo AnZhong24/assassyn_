@@ -349,7 +349,10 @@ class Slice(Expr):
         '''Get the data type of the sliced value'''
         # pylint: disable=import-outside-toplevel
         from ..dtype import Bits
-        return Bits(self.r.value - self.l.value + 1)
+        from ..const import Const
+        assert isinstance(self.l.value, Const)
+        assert isinstance(self.r.value, Const)
+        return Bits(self.r.value.value - self.l.value.value + 1)
 
     def __repr__(self):
         return f'{self.as_operand()} = {self.x.as_operand()}[{self.l}:{self.r}]'
@@ -425,7 +428,7 @@ class UnaryOp(Expr):
 
     OPERATORS = {
         NEG: '-',
-        FLIP: '~',
+        FLIP: '!',
     }
 
     def __init__(self, opcode, x):
@@ -435,6 +438,13 @@ class UnaryOp(Expr):
     def x(self) -> Value:
         '''Get the operand of this unary operation'''
         return self._operands[0]
+
+    @property
+    def dtype(self) -> DType:
+        '''Get the data type of this unary operation'''
+        # pylint: disable=import-outside-toplevel
+        from ..dtype import Bits
+        return Bits(self.x.dtype.bits)
 
     def __repr__(self):
         return f'{self.as_operand()} = {self.OPERATORS[self.opcode]}{self.x.as_operand()}'
@@ -605,10 +615,11 @@ class Select(Expr):
     # Triary operations
     SELECT = 1000
 
-    def __init__(self, opcode, cond, true_val, false_val):
+    def __init__(self, opcode, cond, true_val: Value, false_val: Value):
         assert isinstance(cond, Value), f'{type(cond)} is not a Value!'
         assert isinstance(true_val, Value), f'{type(true_val)} is not a Value!'
         assert isinstance(false_val, Value), f'{type(false_val)} is not a Value!'
+        assert true_val.dtype == false_val.dtype, f'{true_val.dtype} != {false_val.dtype}'
         super().__init__(opcode, [cond, true_val, false_val])
 
     @property
@@ -626,6 +637,11 @@ class Select(Expr):
         '''Get the false value'''
         return self._operands[2]
 
+    @property
+    def dtype(self) -> DType:
+        '''Get the data type of this operation'''
+        return self.true_value.dtype
+
     def __repr__(self):
         lval = self.as_operand()
         cond = self.cond.as_operand()
@@ -636,14 +652,19 @@ class Select(Expr):
 class Select1Hot(Expr):
     '''The class for the 1hot select operation'''
 
-    cond: Value  # One-hot condition
-    values: list[Value]  # List of possible values
-
     # Triary operations
     SELECT_1HOT = 1001
 
     def __init__(self, opcode, cond, values):
+        reference = values[0]
+        for i in values:
+            assert reference.dtype == i.dtype, f'{reference.dtype} != {i.dtype}'
         super().__init__(opcode, [cond] + list(values))
+
+    @property
+    def dtype(self) -> DType:
+        '''Get the data type of this operation'''
+        return self.values[0].dtype
 
     @property
     def cond(self) -> Value:

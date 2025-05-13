@@ -98,7 +98,8 @@ class ElaborateModule(Visitor):
 
         elif isinstance(node, UnaryOp):
             operand = dump_rval_ref(self.module_ctx, self.sys, node.x)
-            code.append(f"{node.get_opcode()}{operand}")
+            uniop = UnaryOp.OPERATORS[node.opcode]
+            code.append(f"{uniop}{operand}")
 
         elif isinstance(node, ArrayRead):
             array = node.array
@@ -199,10 +200,10 @@ class ElaborateModule(Visitor):
 
         elif isinstance(node, Slice):
             a = dump_rval_ref(self.module_ctx, self.sys, node.x)
-            l = node.l
-            r = node.r
+            l = node.l.value.value
+            r = node.r.value.value
             dtype = node.dtype
-            mask_bits = "1" * (r - l + 1)
+            mask_bits = "1" * dtype.bits
 
             if l < 64 and r < 64:
                 result_a = f'''let a = ValueCastTo::<u64>::cast(&{a});
@@ -254,10 +255,10 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
             code.append("".join(result))
 
         elif isinstance(node, Cast):
-            dest_dtype = node.dest_type
+            dest_dtype = node.dtype
             a = dump_rval_ref(self.module_ctx, self.sys, node.x)
 
-            if node.subcode in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
+            if node.opcode in [Cast.ZEXT, Cast.BITCAST, Cast.SEXT]:
                 code.append(f"ValueCastTo::<{dtype_to_rust_type(dest_dtype)}>::cast(&{a})")
 
         elif isinstance(node, Bind):

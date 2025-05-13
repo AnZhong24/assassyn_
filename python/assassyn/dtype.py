@@ -18,6 +18,10 @@ class DType:
         '''The number of bits in this data type'''
         return self._bits
 
+    def __eq__(self, other):
+        '''Check if two data types are equal'''
+        return self.__class__ == other.__class__ and self.bits == other.bits
+
     def attributize(self, value, name):
         '''The syntax sugar for creating a port'''
 

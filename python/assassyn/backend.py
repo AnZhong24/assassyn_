@@ -81,15 +81,15 @@ def elaborate(# pylint: disable=too-many-locals
         **kwargs: The optional arguments that will be passed to the code generator.
     '''
 
-    if kwargs['verbose']:
-        print(sys)
-
     real_config = config()
 
     for k, v in kwargs.items():
         if k not in real_config:
             raise ValueError(f'Invalid config key: {k}')
         real_config[k] = v
+
+    if real_config['verbose']:
+        print(sys)
 
     path = real_config['path']
     verilog = real_config['verilog']
