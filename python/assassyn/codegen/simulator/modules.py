@@ -87,7 +87,9 @@ class ElaborateModule(Visitor):
             if node.is_comparative():
                 rust_ty = node.lhs.dtype
             else:
-                rust_ty = dtype_to_rust_type(node.dtype)
+                rust_ty = node.dtype
+
+            rust_ty = dtype_to_rust_type(rust_ty)
 
             lhs = dump_rval_ref(self.module_ctx, self.sys, node.lhs)
             rhs = dump_rval_ref(self.module_ctx, self.sys, node.rhs)
