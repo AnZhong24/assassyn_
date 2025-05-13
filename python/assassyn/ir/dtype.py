@@ -1,6 +1,7 @@
 '''Data type module for assassyn frontend'''
 
-from .expr import Value
+from .value import Value
+from .expr import concat
 
 #pylint: disable=too-few-public-methods,useless-parent-delegation,cyclic-import,unused-argument
 
@@ -284,8 +285,6 @@ class RecordValue:
         assert not fields_set, f'Fields are not fully initialized, missing: {fields_set}'
         ordered_values.sort(key=lambda x: -x[0].start)
 
-        #pylint: disable=import-outside-toplevel
-        from .expr import concat
         payload = concat(*[v for _, v in ordered_values])
 
         self._payload = payload

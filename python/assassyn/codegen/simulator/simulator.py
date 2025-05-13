@@ -4,10 +4,10 @@ import os
 from collections import defaultdict
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
-from ...module import Downstream, Module, SRAM
 from ...builder import SysBuilder
-from ...block import CycledBlock
-from ...expr import Expr, FIFOPush
+from ...ir.block import CycledBlock
+from ...ir.expr import Expr, FIFOPush
+from ...module import Downstream, Module, SRAM
 
 
 def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements

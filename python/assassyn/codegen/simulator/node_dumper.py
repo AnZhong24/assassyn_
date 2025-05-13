@@ -2,11 +2,11 @@
 
 from .utils import namify, int_imm_dumper_impl, fifo_name
 from ...utils import unwrap_operand
-from ...expr import Expr
-from ...array import Array
+from ...ir.expr import Expr
+from ...ir.array import Array
+from ...ir.const import Const
+from ...ir.expr import FIFOPush
 from ...module import Module, Port
-from ...const import Const
-from ...expr import FIFOPush
 
 def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statements
         module_ctx, _, node):

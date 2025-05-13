@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import typing
 
-from ...visitor import Visitor
-from ...block import Block, CondBlock, CycledBlock
-from ...expr import (
+from ...ir.visitor import Visitor
+from ...ir.block import Block, CondBlock, CycledBlock
+from ...ir.expr import (
         Expr,
         BinaryOp,
         UnaryOp,

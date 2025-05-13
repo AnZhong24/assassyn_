@@ -5,7 +5,7 @@ import typing
 
 from ..utils import identifierize, unwrap_operand
 from ..builder import ir_builder
-from ..expr import PureIntrinsic, Operand, Expr
+from ..ir.expr import PureIntrinsic, Operand, Expr
 
 
 # pylint: disable=too-few-public-methods, cyclic-import
@@ -38,7 +38,7 @@ class ModuleBase:
         '''Add an external operand to this module.'''
         # pylint: disable=import-outside-toplevel
         from .module import Module
-        from ..array import Array
+        from ..ir.array import Array
         is_external = False
         if isinstance(operand, Operand):
             value = operand.value
@@ -53,7 +53,7 @@ class ModuleBase:
 
     def _dump_externals(self):
         # pylint: disable=import-outside-toplevel
-        from ..block import Block
+        from ..ir.block import Block
         res = ''
         for value, operands in self._externals.items():
             unwrapped = unwrap_operand(value)

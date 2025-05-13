@@ -1,6 +1,6 @@
 """Utility functions for simulator generation."""
 
-from ...dtype import DType, Void, ArrayType, Record, Bits
+from ...ir.dtype import DType, Void, ArrayType, Record, Bits
 from ...module import Port
 
 

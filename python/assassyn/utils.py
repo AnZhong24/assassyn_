@@ -17,7 +17,7 @@ def unwrap_operand(node):
     This is a helper function to get the operand from the node.
     """
     # pylint: disable=import-outside-toplevel
-    from .expr import Operand
+    from .ir.expr import Operand
     if isinstance(node, Operand):
         return node.value
     return node

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import typing
 
-from .builder import ir_builder, Singleton
+from ..builder import ir_builder, Singleton
 from .dtype import to_uint, RecordValue
 from .expr import ArrayRead, ArrayWrite
 from .value import Value
-from .utils import identifierize
+from ..utils import identifierize
 
 if typing.TYPE_CHECKING:
     from .dtype import DType

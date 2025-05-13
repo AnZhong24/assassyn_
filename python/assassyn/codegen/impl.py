@@ -1,17 +1,16 @@
 '''The module to generate the assassyn IR builder for the given system'''
 
-from .. import visitor
-from .. import dtype
-from .. import expr
-from .. import module
-from .. import block
-from .. import const
+from ..ir import visitor
+from ..ir import dtype
+from ..ir import expr
+from ..ir import block
+from ..ir import const
 from ..builder import SysBuilder
-from ..array import Array
-from ..module import Module, Port
-from ..block import Block
-from ..expr import Expr, Operand
+from ..ir.array import Array
+from ..ir.block import Block
+from ..ir.expr import Expr, Operand
 from ..utils import identifierize
+from ..module import Module, Port, SRAM
 from .simulator import elaborate
 
 CG_OPCODE = {
@@ -164,9 +163,9 @@ class CodeGen(visitor.Visitor):
             self.code.append(f'{module_mut}.add_attr({path}::NoArbiter);')
 
 
-    def emit_memory_attrs(self, m: module.SRAM, var_id):
+    def emit_memory_attrs(self, m: SRAM, var_id):
         '''Emit the memory attributes only for downstream modules'''
-        if isinstance(m, module.SRAM):
+        if isinstance(m, SRAM):
             module_mut = f'{var_id}.as_mut::<assassyn::ir::Module>(&mut sys).unwrap()'
             path = 'assassyn::ir::module'
             # (width, depth, init_file, we, re, addr, wdata)
@@ -349,7 +348,7 @@ class CodeGen(visitor.Visitor):
             return imm_var
         if isinstance(unwrapped, int):
             return str(unwrapped)
-        if isinstance(unwrapped, module.Port):
+        if isinstance(unwrapped, Port):
             module_name = self.generate_rval(unwrapped.module)
             port_name = f'{module_name}_{unwrapped.name}'
             self.code.append(f'''  // Get port {unwrapped.name}

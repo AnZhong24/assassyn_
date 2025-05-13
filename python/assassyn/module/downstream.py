@@ -4,7 +4,7 @@ chronological modules.'''
 from decorator import decorator
 
 from .base import ModuleBase
-from ..block import Block
+from ..ir.block import Block
 from ..builder import Singleton
 
 @decorator

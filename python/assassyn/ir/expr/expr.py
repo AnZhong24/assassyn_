@@ -7,13 +7,13 @@ from __future__ import annotations
 from functools import reduce
 import typing
 
-from ..builder import ir_builder
+from ...builder import ir_builder
 from ..value import Value
-from ..utils import identifierize
+from ...utils import identifierize
 
 if typing.TYPE_CHECKING:
     from ..array import Array
-    from ..module import Port, Module
+    from ...module import Port, Module
     from ..dtype import DType
     from ..block import Block
 
@@ -487,7 +487,7 @@ class PureIntrinsic(Expr):
 
         if self.opcode == PureIntrinsic.FIFO_PEEK:
             # pylint: disable=import-outside-toplevel
-            from ..module import Port
+            from ...module import Port
             fifo = self.args[0]
             assert isinstance(fifo, Port)
             return fifo.dtype
@@ -509,7 +509,7 @@ class PureIntrinsic(Expr):
         if self.opcode == PureIntrinsic.FIFO_PEEK:
             port = self.args[0]
             # pylint: disable=import-outside-toplevel
-            from ..module import Port
+            from ...module import Port
             assert isinstance(port, Port)
             return port.dtype.attributize(self, name)
 
