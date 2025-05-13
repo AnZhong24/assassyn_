@@ -21,3 +21,6 @@ from .impl import (
     CG_MIDFIX,
     CG_SIMULATOR
 )
+
+# Import verilog backend
+from . import verilog
