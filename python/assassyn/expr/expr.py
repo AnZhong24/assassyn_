@@ -159,7 +159,9 @@ class BinaryOp(Expr):
         if self.opcode in [BinaryOp.ADD, BinaryOp.SUB, BinaryOp.DIV, BinaryOp.MOD]:
             return type(self.lhs.dtype)(self.lhs.dtype.bits)
         if self.opcode in [BinaryOp.MUL]:
-            return Bits(self.lhs.dtype.bits + self.rhs.dtype.bits)
+            bits = self.lhs.dtype.bits + self.rhs.dtype.bits
+            tyclass = self.lhs.dtype.__class__
+            return tyclass(bits)
         if self.opcode in [BinaryOp.SHL, BinaryOp.SHR]:
             return Bits(self.lhs.dtype.bits)
         if self.opcode in [BinaryOp.ILT, BinaryOp.IGT, BinaryOp.ILE, BinaryOp.IGE,

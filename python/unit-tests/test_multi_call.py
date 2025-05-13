@@ -4,6 +4,7 @@ from assassyn import utils
 from assassyn.backend import elaborate
 from assassyn.frontend import *
 
+# TODO(@were): Drop this for now (May 13, 2025). Fix this later by porting Rust back to python.
 
 class Adder(Module):
     
