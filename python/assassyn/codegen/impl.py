@@ -11,7 +11,8 @@ from ..ir.block import Block
 from ..ir.expr import Expr, Operand
 from ..utils import identifierize
 from ..ir.module import Module, Port, SRAM
-from .simulator import elaborate
+from . import simulator
+from . import verilog
 
 CG_OPCODE = {
     expr.BinaryOp.ADD: 'add',
@@ -553,6 +554,11 @@ def codegen(sys: SysBuilder, **kwargs):
     # If simulator flag is set, use the Python implementation to generate it
     if kwargs['simulator']:
         print('Start simulator in-python elaboration')
-        simulator_manifest = elaborate(sys, **kwargs)
+        simulator_manifest = simulator.elaborate(sys, **kwargs)
+
+    if kwargs.get('verilog'):
+        print('Start verilog elaboration')
+        verilog_path = verilog.elaborate(sys, **kwargs)
+
 
     return cg.get_source(), simulator_manifest
