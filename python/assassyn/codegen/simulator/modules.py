@@ -156,7 +156,7 @@ class ElaborateModule(Visitor):
 
             if intrinsic == PureIntrinsic.FIFO_PEEK:
                 port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))
-                code.append(f"sim.{port_self}.front().clone().unwrap()")
+                code.append(f"sim.{port_self}.front().cloned().unwrap()")
 
             elif intrinsic == PureIntrinsic.FIFO_VALID:
                 port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))
