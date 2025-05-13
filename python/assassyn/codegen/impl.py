@@ -465,7 +465,7 @@ class CodeGen(visitor.Visitor):
         for attr in node.attr:
             if attr == Array.FULLY_PARTITIONED:
                 attrs.append(f'{path}::FullyPartitioned')
-            elif isinstance(attr, module.SRAM):
+            elif isinstance(attr, SRAM):
                 # Skip this, this is handled in the module attributes
                 pass
             else:
