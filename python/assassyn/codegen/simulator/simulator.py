@@ -6,7 +6,7 @@ from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
 from ...module import Downstream, Module, SRAM
 from ...builder import SysBuilder
-from ...block import Block
+from ...block import CycledBlock
 from ...expr import Expr, FIFOPush
 
 
@@ -222,21 +222,20 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         for i in 1..={sim_threshold} {{ sim.Driver_event.push_back(i * 100); }} """)
 
     # Add initial events for testbench if present
-    if sys.has_module("testbench") is not None:
-        testbench = sys.get_module("testbench")
+    testbench = sys.has_module("Testbench")
+    if testbench is not None:
         cycles = []
 
         # Collect cycles from testbench blocks
-        for block in testbench.get_body().body_iter():
-            if isinstance(block, Block):
-                if block.get_cycle() is not None:
-                    cycles.append(block.get_cycle())
+        for block in testbench.body.body:
+            if isinstance(block, CycledBlock):
+                cycles.append(block.cycle)
 
         if cycles:
             fd.write(f"""
               let tb_cycles = vec![{', '.join(map(str, cycles))}];
               for cycle in tb_cycles {{
-                sim.testbench_event.push_back(cycle * 100);
+                sim.Testbench_event.push_back(cycle * 100);
               }}
             """)
 
