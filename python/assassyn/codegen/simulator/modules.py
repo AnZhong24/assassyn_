@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 
 from ...visitor import Visitor
-from ...block import Block
+from ...block import Block, CondBlock, CycledBlock
 from ...expr import (
         Expr,
         BinaryOp,
@@ -83,7 +83,12 @@ class ElaborateModule(Visitor):
 
         if isinstance(node, BinaryOp):
             binop = BinaryOp.OPERATORS[node.opcode]
-            rust_ty = dtype_to_rust_type(node.dtype)
+
+            if node.is_comparative():
+                rust_ty = node.lhs.dtype
+            else:
+                rust_ty = dtype_to_rust_type(node.dtype)
+
             lhs = dump_rval_ref(self.module_ctx, self.sys, node.lhs)
             rhs = dump_rval_ref(self.module_ctx, self.sys, node.rhs)
             # Special handling for shift operations
@@ -315,6 +320,14 @@ assert!(cond.count_ones() == 1, \"Select1Hot: condition is not 1-hot\");''']
 
         # Save current indentation
         restore_indent = self.indent
+
+        if isinstance(node, CondBlock):
+            cond = dump_rval_ref(self.module_ctx, self.sys, node.cond)
+            result.append(f"if {cond} {{\n")
+            self.indent += 2
+        elif isinstance(node, CycledBlock):
+            result.append(f"if sim.stamp / 100 == {node.cycle} {{\n")
+            self.indent += 2
 
         # Visit each element in the block
         for elem in node.iter():

@@ -175,6 +175,17 @@ class BinaryOp(Expr):
         op = self.OPERATORS[self.opcode]
         return f'{lval} = {lhs} {op} {rhs}'
 
+    def is_computational(self):
+        '''Check if this operation is computational'''
+        return self.opcode in [BinaryOp.ADD, BinaryOp.SUB, BinaryOp.MUL, BinaryOp.DIV,
+                               BinaryOp.MOD]
+
+    def is_comparative(self):
+        '''Check if this operation is comparative'''
+        return self.opcode in [BinaryOp.ILT, BinaryOp.IGT, BinaryOp.ILE, BinaryOp.IGE,
+                               BinaryOp.EQ, BinaryOp.NEQ]
+
+
 class FIFOPush(Expr):
     '''The class for FIFO push operation'''
 
