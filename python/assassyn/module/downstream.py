@@ -39,7 +39,8 @@ class Downstream(ModuleBase):
     def _repr_impl(self, head):
         var_id = self.as_operand()
         body = repr(self.body) if self.body is not None else ''
-        return f'''  #[{head}]
+        ext = self._dump_externals()
+        return f'''{ext}  #[{head}]
   {var_id} = module {self.name} {{
 {body}
   }}

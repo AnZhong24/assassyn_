@@ -1,5 +1,7 @@
 """Module elaboration for simulator code generation."""
 
+#pylint: disable=cyclic-import
+
 from __future__ import annotations
 
 import typing
@@ -161,9 +163,10 @@ class ElaborateModule(Visitor):
                 code.append(f"!sim.{port_self}.is_empty()")
 
             elif intrinsic == PureIntrinsic.VALUE_VALID:
-                value = node.get_operand(0)
-                value_expr = value.as_expr()
-                code.append(f"sim.{namify(value_expr.get_name())}_value.is_some()")
+                assert isinstance(node.get_operand(0).value, Expr)
+                value = node.get_operand(0).value
+                value = namify(value.as_operand())
+                code.append(f"sim.{value}_value.is_some()")
 
             elif intrinsic == PureIntrinsic.MODULE_TRIGGERED:
                 port_self = dump_rval_ref(self.module_ctx, self.sys, node.get_operand(0))

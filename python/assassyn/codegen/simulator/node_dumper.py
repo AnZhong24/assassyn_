@@ -1,18 +1,18 @@
 """Node reference dumper for simulator code generation."""
 
 from .utils import namify, int_imm_dumper_impl, fifo_name
-from ...expr import Expr, Operand
+from ...utils import unwrap_operand
+from ...expr import Expr
 from ...array import Array
 from ...module import Module, Port
 from ...const import Const
 from ...expr import FIFOPush
 
-
 def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statements
         module_ctx, _, node):
     """Dispatch to appropriate handler based on node kind."""
 
-    unwrapped = node.value if isinstance(node, Operand) else node
+    unwrapped = unwrap_operand(node)
 
     if isinstance(unwrapped, Array):
         return namify(unwrapped.name)
@@ -55,7 +55,7 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
     return namify(unwrapped.as_operand())
 
 
-def externally_used_combinational(expr: Expr) -> bool:
+def externally_used_combinational(expr: Expr) -> list:
     """Check if an expression is used outside its module.
 
     This matches the Rust function in src/backend/simulator/elaborate.rs
@@ -69,7 +69,7 @@ def externally_used_combinational(expr: Expr) -> bool:
 
     # Check if any user is in a different module
     for user in expr.users:
-        parent_module = user.parent.module
+        parent_module = user.user.parent.module
         if parent_module != this_module:
             return True
 

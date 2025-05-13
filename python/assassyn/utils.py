@@ -11,6 +11,17 @@ def identifierize(obj):
     from .builder import Singleton
     return hex(id(obj))[Singleton.id_slice]
 
+def unwrap_operand(node):
+    """Unwrap the operand from the node.
+
+    This is a helper function to get the operand from the node.
+    """
+    # pylint: disable=import-outside-toplevel
+    from .expr import Operand
+    if isinstance(node, Operand):
+        return node.value
+    return node
+
 PATH_CACHE = None
 
 def repo_path():

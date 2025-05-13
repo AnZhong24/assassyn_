@@ -126,11 +126,11 @@ class Module(ModuleBase):
 
         Singleton.repr_ident = 2
         body = self.body.__repr__()
-        return f'''  {attrs}
+        ext = self._dump_externals()
+        return f'''{ext}  {attrs}
   {var_id} = module {self.name} {ports}{{
 {body}
-  }}
-'''
+  }}'''
 
     @property
     def is_systolic(self):

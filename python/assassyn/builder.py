@@ -1,4 +1,7 @@
 '''The module provides the implementation of a class that is both IR builder and the system.'''
+
+#pylint: disable=cyclic-import
+
 from __future__ import annotations
 import os
 import typing
@@ -72,6 +75,10 @@ class SysBuilder:
 
     def enter_context_of(self, ty, entry):
         '''Enter the context of the given type.'''
+        #pylint: disable=import-outside-toplevel
+        from .block import CondBlock
+        if isinstance(entry, CondBlock):
+            self.current_module.add_external(entry.cond)
         self._ctx_stack[ty].append(entry)
 
     def exit_context_of(self, ty):
@@ -91,6 +98,7 @@ class SysBuilder:
             if i.name == name:
                 return i
         return None
+
     def __init__(self, name):
         self.name = name
         self.modules = []

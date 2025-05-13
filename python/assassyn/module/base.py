@@ -3,7 +3,7 @@
 from __future__ import annotations
 import typing
 
-from ..utils import identifierize
+from ..utils import identifierize, unwrap_operand
 from ..builder import ir_builder
 from ..expr import PureIntrinsic, Operand, Expr
 
@@ -50,3 +50,17 @@ class ModuleBase:
                 if value not in self._externals:
                     self._externals[value] = []
                 self._externals[value].append(operand)
+
+    def _dump_externals(self):
+        # pylint: disable=import-outside-toplevel
+        from ..block import Block
+        res = ''
+        for value, operands in self._externals.items():
+            unwrapped = unwrap_operand(value)
+            res = res + f'  // External: {unwrapped}\n'
+            for operand in operands:
+                if not isinstance(operand.user, Block):
+                    res = res + f'  //  .usedby: {operand.user}\n'
+                else:
+                    res = res + f'  //  .usedby: condition::{operand.user.as_operand()}\n'
+        return res

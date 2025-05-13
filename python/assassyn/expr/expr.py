@@ -355,7 +355,9 @@ class Slice(Expr):
         return Bits(self.r.value.value - self.l.value.value + 1)
 
     def __repr__(self):
-        return f'{self.as_operand()} = {self.x.as_operand()}[{self.l}:{self.r}]'
+        l = self.l.as_operand()
+        r = self.r.as_operand()
+        return f'{self.as_operand()} = {self.x.as_operand()}[{l}:{r}]'
 
 class Concat(Expr):
     '''The class for concatenation operation, where {msb, lsb} as a right value'''

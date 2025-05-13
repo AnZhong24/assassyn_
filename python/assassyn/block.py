@@ -76,7 +76,9 @@ class CondBlock(Block):
 
     def __init__(self, cond):
         super().__init__(Block.CONDITIONAL)
-        self.cond = cond
+        # pylint: disable=import-outside-toplevel
+        from .expr import Operand
+        self.cond = Operand(cond, self)
 
     def __repr__(self):
         ident = Singleton.repr_ident * ' '

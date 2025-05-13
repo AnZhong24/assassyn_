@@ -30,7 +30,7 @@ use num_bigint::{BigInt, BigUint};
 
     # Generate each module's implementation
     em = ElaborateModule(sys)
-    for module in sys.modules:
+    for module in sys.modules[:] + sys.downstreams[:]:
         module_code = em.visit_module(module)
         fd.write(module_code)
 

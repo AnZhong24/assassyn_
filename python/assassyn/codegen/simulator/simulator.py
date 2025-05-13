@@ -7,7 +7,7 @@ from .node_dumper import externally_used_combinational
 from ...module import Downstream, Module, SRAM
 from ...builder import SysBuilder
 from ...block import Block
-from ...expr import Expr
+from ...expr import Expr, FIFOPush
 
 
 def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements
@@ -62,9 +62,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     expr_validities = set()
 
     # Add module fields to simulator struct
-    for module in sys.modules:
-        assert isinstance(module, Module)
-
+    for module in sys.modules[:] + sys.downstreams[:]:
         module_name = namify(module.name)
 
         # Add triggered flag for all modules
@@ -72,7 +70,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         simulator_init.append(f"{module_name}_triggered : false,")
         downstream_reset.append(f"self.{module_name}_triggered = false;")
 
-        if not isinstance(module, Downstream):
+        if isinstance(module, Module):
             # Add event queue for non-downstream modules
             fd.write(f"pub {module_name}_event : VecDeque<usize>, ")
             simulator_init.append(f"{module_name}_event : VecDeque::new(),")
@@ -84,16 +82,19 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
                 fd.write(f"pub {name} : FIFO<{ty}>, ")
                 simulator_init.append(f"{name} : FIFO::new(),")
                 registers.append(name)
-        else:
+        elif isinstance(module, Downstream):
             # Gather expressions with external visibility for downstream modules
             for expr in module.externals:
-                if isinstance(expr, Expr) and externally_used_combinational(expr):
-                    expr_validities.add(expr)
+                if isinstance(expr, Expr):
+                    if externally_used_combinational(expr):
+                        expr_validities.add(expr)
+                    else:
+                        print('Not externally used!')
 
     # Add value validity tracking for expressions with external visibility
     for expr in expr_validities:
-        name = namify(expr.get_name())
-        dtype = dtype_to_rust_type(expr.dtype())
+        name = namify(expr.as_operand())
+        dtype = dtype_to_rust_type(expr.dtype)
         fd.write(f"pub {name}_value : Option<{dtype}>, ")
         simulator_init.append(f"{name}_value : None,")
         downstream_reset.append(f"self.{name}_value = None;")
@@ -135,11 +136,10 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
 
     # Get topological order for downstream modules
     downstreams = analyze_topological_order(sys)
-    topo_map = {module: i for i, module in enumerate(downstreams)}
 
     # Module simulation functions
     simulators = []
-    for module in sys.modules:
+    for module in sys.modules[:] + sys.downstreams[:]:
         module_name = namify(module.name)
         fd.write(f"  fn simulate_{module_name}(&mut self) {{\n")
 
@@ -149,7 +149,9 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
         else:
             # Dependency based triggering for downstream modules
             upstream_conds = []
-            for upstream in get_upstreams(module, topo_map, sys):
+            print(f"Module {module_name} upstreams:")
+            for upstream in get_upstreams(module):
+                print(f"  {upstream.name}")
                 upstream_name = namify(upstream.name)
                 upstream_conds.append(f"self.{upstream_name}_triggered")
 
@@ -166,8 +168,8 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
 
             # Reset externally used values on failure
             for expr in expr_validities:
-                if expr.get_block().get_module() == module:
-                    name = namify(expr.get_name())
+                if expr.parent.module == module:
+                    name = namify(expr.as_operand())
                     fd.write(f"        self.{name}_value = None;\n")
 
             fd.write("      }\n")
@@ -200,7 +202,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     # Add simulators for downstream modules
     fd.write("  let downstreams : Vec<fn(&mut Simulator)> = vec![")
     for downstream in downstreams:
-        module_name = downstream.get_name()
+        module_name = downstream.name
         fd.write(f"Simulator::simulate_{module_name}, ")
     fd.write("];\n")
 
@@ -293,21 +295,27 @@ def analyze_topological_order(sys):
 
     This is a simplified implementation of the topo_sort function in Rust.
     """
+
     # Get all downstream modules
-    modules = [m for m in sys.modules if isinstance(m, Downstream)]
+    downstreams = sys.downstreams[:]
 
     # Build dependency graph
     graph = defaultdict(list)
     in_degree = defaultdict(int)
 
-    for module in modules:
-        deps = module.get_dependencies()
+    for module in downstreams:
+        deps = set()
+        for elem in module.externals.keys():
+            if isinstance(elem, Expr):
+                depend = elem.parent.module
+                if isinstance(depend, Downstream):
+                    deps.add(depend)
         for dep in deps:
             graph[dep].append(module)
             in_degree[module] += 1
 
     # Topological sort
-    queue = [m for m in modules if in_degree[m] == 0]
+    queue = [m for m in downstreams if in_degree[m] == 0]
     result = []
 
     while queue:
@@ -322,24 +330,18 @@ def analyze_topological_order(sys):
     return result
 
 
-def get_upstreams(module, topo_map, sys):
+def get_upstreams(module):
     """Get upstream modules of a given module.
-
     This matches the upstreams function in Rust.
     """
-    result = []
+    res = set()
 
-    # Each module depends on all modules with a lower topo_map index
-    module_idx = topo_map.get(module, float('inf'))
-    for other_module in sys.module_iter():
-        if other_module == module:
-            continue
+    for elem in module.externals.keys():
+        if isinstance(elem, Expr):
+            if not isinstance(elem, FIFOPush):
+                res.add(elem.parent.module)
 
-        other_idx = topo_map.get(other_module, float('inf'))
-        if other_idx < module_idx:
-            result.append(other_module)
-
-    return result
+    return res
 
 
 def dump_main(fd):
