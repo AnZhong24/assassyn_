@@ -6,28 +6,29 @@ Ported from Rust's src/backend/verilog/utils.rs.
 from collections import deque
 from typing import List, Iterator, Optional, Tuple
 
-from assassyn.ir import DataType
+from ...ir import DType
+from ...ir.dtype import Int, UInt, Bits
 
 
 class DisplayInstance:
     """
     Display instance for various IR elements in Verilog code generation.
     """
-
+    
     def __init__(self, prefix: str, id_: str):
         self.prefix = prefix
         self.id = id_
-
+        
     @classmethod
     def from_module(cls, module):
         """Create a DisplayInstance from a module."""
         return cls("", namify(module.get_name()))
-
+    
     @classmethod
     def from_array(cls, array):
         """Create a DisplayInstance from an array."""
         return cls("array", namify(array.get_name()))
-
+    
     @classmethod
     def from_fifo(cls, fifo, global_):
         """Create a DisplayInstance from a FIFO."""
@@ -37,11 +38,11 @@ class DisplayInstance:
         else:
             fifo_name = raw
         return cls("fifo", fifo_name)
-
+    
     def field(self, attr: str) -> str:
         """Get a field of this instance with the given attribute name."""
         return f"{self}_{attr}"
-
+    
     def __str__(self) -> str:
         """String representation of this instance."""
         if not self.prefix:
@@ -53,11 +54,11 @@ class Edge:
     """
     Edge between a display instance and a driver module.
     """
-
+    
     def __init__(self, instance: DisplayInstance, driver):
         self.instance = instance
         self.driver = namify(driver.get_name())
-
+    
     def field(self, field: str) -> str:
         """Get a field of this edge with the given field name."""
         return f"{self.instance}_driver_{self.driver}_{field}"
@@ -84,28 +85,28 @@ def reduce(iter_: Iterator[str], concat: str) -> str:
     return result
 
 
-def bool_ty() -> DataType:
+def bool_ty() -> Int:
     """Get a boolean type (1-bit integer)."""
-    return DataType.int_ty(1)
+    return Int(1)
 
 
-def declare_impl(decl_prefix: str, ty: DataType, id_: str, term: str) -> str:
+def declare_impl(decl_prefix: str, ty: DType, id_: str, term: str) -> str:
     """Implementation helper for declaring variables."""
     bits = ty.get_bits() - 1
     return f"  {decl_prefix} [{bits}:0] {id_}{term}\n"
 
 
-def declare_logic(ty: DataType, id_: str) -> str:
+def declare_logic(ty: DType, id_: str) -> str:
     """Declare a logic variable."""
     return declare_impl("logic", ty, id_, ";")
 
 
-def declare_in(ty: DataType, id_: str) -> str:
+def declare_in(ty: DType, id_: str) -> str:
     """Declare an input port."""
     return declare_impl("input logic", ty, id_, ",")
 
 
-def declare_out(ty: DataType, id_: str) -> str:
+def declare_out(ty: DType, id_: str) -> str:
     """Declare an output port."""
     return declare_impl("output logic", ty, id_, ",")
 
@@ -126,9 +127,9 @@ def connect_top(display, edge, fields: List[str]) -> str:
     return result
 
 
-def type_to_fmt(ty: DataType) -> str:
-    """Convert a DataType to a format specifier."""
-    if ty.is_int() or ty.is_uint() or ty.is_bits():
+def type_to_fmt(ty: DType) -> str:
+    """Convert a DType to a format specifier."""
+    if isinstance(ty, Int) or isinstance(ty, UInt) or isinstance(ty, Bits):
         return "d"
     raise ValueError(f"Invalid type for type: {ty}")
 
@@ -139,26 +140,26 @@ def parse_format_string(args: List, sys) -> str:
     fmt = deque(raw)
     result = ""
     arg_idx = 1
-
+    
     while fmt:
         c = fmt.popleft()
         if c == '{':
             if not fmt:
                 raise ValueError(f"Invalid format string: {raw}")
-
+                
             c = fmt.popleft()
             if c == '{':
                 result += '{'
             else:
                 dtype = args[arg_idx].get_dtype(sys)
                 substr = c
-
+                
                 # Handle "{}"
                 if substr == "}":
                     result += f"%{type_to_fmt(dtype)}"
                     arg_idx += 1
                     continue
-
+                    
                 closed = False
                 while fmt:
                     c = fmt.popleft()
@@ -166,10 +167,10 @@ def parse_format_string(args: List, sys) -> str:
                         closed = True
                         break
                     substr += c
-
+                    
                 if not closed:
                     raise ValueError(f"Invalid format string, unclosed braces: {raw}")
-
+                    
                 if not substr:
                     new_fmt = type_to_fmt(dtype)
                 elif substr.startswith(':'):
@@ -177,17 +178,17 @@ def parse_format_string(args: List, sys) -> str:
                     pad = "0" if substr[1:2] == "0" else ""
                     if pad:
                         width_idx += 1
-
+                        
                     width = ""
                     if width_idx < len(substr) and substr[width_idx].isdigit():
                         width = substr[width_idx]
                         width_idx += 1
-
+                        
                     vfmt = substr[width_idx] if width_idx < len(substr) and substr[width_idx].isalpha() else type_to_fmt(dtype)
                     new_fmt = f"%{pad}{width}{vfmt}"
                 else:
                     raise ValueError(f"Invalid format string: {raw}")
-
+                    
                 result += new_fmt
                 arg_idx += 1
         elif c == '}':
@@ -196,7 +197,7 @@ def parse_format_string(args: List, sys) -> str:
             result += '}'
         else:
             result += c
-
+            
     return result
 
 
