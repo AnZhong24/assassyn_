@@ -10,7 +10,7 @@ import inspect
 from decorator import decorator
 
 if typing.TYPE_CHECKING:
-    from .module import Module
+    from .ir.module import Module
     from .ir.array import Array
     from .ir.dtype import DType
     from .ir.value import Value

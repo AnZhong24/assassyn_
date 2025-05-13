@@ -13,7 +13,7 @@ from ...utils import identifierize
 
 if typing.TYPE_CHECKING:
     from ..array import Array
-    from ...module import Port, Module
+    from ..module import Port, Module
     from ..dtype import DType
     from ..block import Block
 
@@ -487,7 +487,7 @@ class PureIntrinsic(Expr):
 
         if self.opcode == PureIntrinsic.FIFO_PEEK:
             # pylint: disable=import-outside-toplevel
-            from ...module import Port
+            from ..module import Port
             fifo = self.args[0]
             assert isinstance(fifo, Port)
             return fifo.dtype

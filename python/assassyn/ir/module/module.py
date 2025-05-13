@@ -5,15 +5,15 @@ from __future__ import annotations
 import typing
 from decorator import decorator
 
-from ..builder import Singleton, ir_builder
-from ..ir.block import Block
-from ..ir.expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall
-from ..ir.expr.intrinsic import wait_until
+from ...builder import Singleton, ir_builder
+from ..block import Block
+from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall
+from ..expr.intrinsic import wait_until
 from .base import ModuleBase
 
 if typing.TYPE_CHECKING:
-    from ..ir.dtype import DType
-    from ..ir.value import Value
+    from ..dtype import DType
+    from ..value import Value
 
 def _reserved_module_name(name):
     return name in ['Driver', 'Testbench']
@@ -164,7 +164,7 @@ class Port:
 
     def __init__(self, dtype: DType):
         #pylint: disable=import-outside-toplevel
-        from ..ir.dtype import DType
+        from ..dtype import DType
         assert isinstance(dtype, DType)
         self.dtype = dtype
         self.name = self.module = None

@@ -31,7 +31,7 @@ from .utils import namify, dtype_to_rust_type, fifo_name
 from .node_dumper import dump_rval_ref, externally_used_combinational
 
 if typing.TYPE_CHECKING:
-    from ...module import Module
+    from ...ir.module import Module
 
 
 class ElaborateModule(Visitor):

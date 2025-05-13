@@ -1,11 +1,11 @@
 '''Memory module, a special and subclass of Module.'''
 
 from .downstream import Downstream, combinational
-from ..ir.array import RegArray, Array
-from ..ir.block import Condition
-from ..ir.dtype import Bits
-from ..ir.expr import Bind
-from ..ir.value import Value
+from ..array import RegArray, Array
+from ..block import Condition
+from ..dtype import Bits
+from ..expr import Bind
+from ..value import Value
 
 
 class SRAM(Downstream): # pylint: disable=too-many-instance-attributes

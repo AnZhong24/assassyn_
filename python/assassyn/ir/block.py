@@ -8,7 +8,7 @@ from ..builder import ir_builder, Singleton
 from ..utils import identifierize
 
 if typing.TYPE_CHECKING:
-    from ..module.base import ModuleBase
+    from .module.base import ModuleBase
     from .value import Value
     from .expr import Expr
 

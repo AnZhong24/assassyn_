@@ -10,7 +10,7 @@ from ..ir.array import Array
 from ..ir.block import Block
 from ..ir.expr import Expr, Operand
 from ..utils import identifierize
-from ..module import Module, Port, SRAM
+from ..ir.module import Module, Port, SRAM
 from .simulator import elaborate
 
 CG_OPCODE = {

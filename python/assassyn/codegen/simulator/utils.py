@@ -1,7 +1,7 @@
 """Utility functions for simulator generation."""
 
 from ...ir.dtype import DType, Void, ArrayType, Record, Bits
-from ...module import Port
+from ...ir.module import Port
 
 
 def namify(name: str) -> str:

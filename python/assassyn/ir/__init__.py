@@ -10,3 +10,6 @@ from .visitor import Visitor
 
 # Import expr submodule
 from . import expr
+
+# Import module submodule
+from . import module

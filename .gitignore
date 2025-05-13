@@ -5,3 +5,5 @@ verilator
 examples/*/__pycache__/
 /.vscode
 *.log
+
+**/.claude/settings.local.json

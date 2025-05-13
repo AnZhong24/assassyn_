@@ -1,7 +1,7 @@
 '''The module for the frontend AST visitor pattern'''
 
 from ..builder import SysBuilder
-from ..module import Module, Port
+from .module import Module, Port
 from .expr import Expr
 from .block import Block
 

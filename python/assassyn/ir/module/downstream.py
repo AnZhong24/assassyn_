@@ -4,8 +4,8 @@ chronological modules.'''
 from decorator import decorator
 
 from .base import ModuleBase
-from ..ir.block import Block
-from ..builder import Singleton
+from ..block import Block
+from ...builder import Singleton
 
 @decorator
 def combinational(

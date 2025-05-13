@@ -1,8 +1,8 @@
 '''FSM (Finite State Machine) syntax sugar.'''
 import math
-from ..ir.block import Condition
-from ..ir.dtype import Bits
-from ..ir.array import Array
+from ..block import Condition
+from ..dtype import Bits
+from ..array import Array
 
 class FSM:# pylint: disable=R0903
     '''FSM inside the module.'''

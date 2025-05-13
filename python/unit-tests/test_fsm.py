@@ -2,7 +2,6 @@ from assassyn.frontend import *
 from assassyn.backend import elaborate
 from assassyn import utils
 import assassyn
-from assassyn.module import fsm
 
 
 class FSM_m(Module):
