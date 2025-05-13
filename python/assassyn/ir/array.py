@@ -13,7 +13,7 @@ from ..utils import identifierize
 if typing.TYPE_CHECKING:
     from .dtype import DType
 
-def RegArray( #pylint: disable=invalid-name
+def RegArray( #pylint: disable=invalid-name,too-many-arguments
         scalar_ty: DType,
         size: int,
         initializer: list = None,
@@ -43,7 +43,7 @@ def RegArray( #pylint: disable=invalid-name
 
     return res
 
-class Array:
+class Array:  #pylint: disable=too-many-instance-attributes
     '''The class represents a register array in the AST IR.'''
 
     scalar_ty: DType  # Data type of each element in the array
@@ -72,6 +72,7 @@ class Array:
 
     @property
     def partition(self):
+        '''Return the partitioned arrays or just this array if not partitioned.'''
         return self._partition if self._partition is not None else [self]
 
     def __init__(self, scalar_ty: DType, size: int, initializer: list, partition: str):
@@ -101,8 +102,7 @@ class Array:
         res += ' [ '
         for i in range(self.size):
             res += f'{self._partition[i].name}, '
-        return res + f' ]'
-
+        return res + ' ]'
 
     @property
     def index_bits(self):
@@ -129,7 +129,6 @@ class Array:
         for i in range(self.size):
             cases[to_uint(i, self.index_bits)] = self._partition[i].__getitem__(0)
         return index.case(cases)
-        
 
     @ir_builder
     def __setitem__(self, index, value):
@@ -146,14 +145,12 @@ class Array:
             self._partition[index].__setitem__(0, value)
             return None
 
-        from .block import Condition
-        from .dtype import UInt
+        # These imports need to be here to avoid circular imports
+        from .block import Condition  # pylint: disable=import-outside-toplevel
+        from .dtype import UInt  # pylint: disable=import-outside-toplevel
         idx_ty = UInt(self.index_bits)
         for i in range(self.size):
             with Condition(index.bitcast(idx_ty) == to_uint(i, self.index_bits)):
                 self._partition[i].__setitem__(0, value)
 
         return None
-
-
-
