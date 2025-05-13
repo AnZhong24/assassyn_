@@ -41,7 +41,9 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
                       }}.clone()"""
 
         ref = namify(unwrapped.as_operand())
-        if unwrapped.dtype.bits <= 64:
+
+        dtype = unwrapped.dtype
+        if dtype.bits <= 64:
             # Simple value
             return namify(ref)
 

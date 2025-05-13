@@ -57,6 +57,7 @@ class Expr(Value):
         '''Initialize the expression with an opcode'''
         self.opcode = opcode
         self.loc = self.parent = None
+        # NOTE: We only wrap values in Operand, not Ports or Arrays
         self._operands = [Operand(i, self) if isinstance(i, Value) else i for i in operands]
         self.users = []
 
@@ -483,9 +484,9 @@ class PureIntrinsic(Expr):
         from ..dtype import Bits
 
         if self.opcode == PureIntrinsic.FIFO_PEEK:
-            fifo = self.args[0].as_operand()
             # pylint: disable=import-outside-toplevel
             from ..module import Port
+            fifo = self.args[0]
             assert isinstance(fifo, Port)
             return fifo.dtype
 

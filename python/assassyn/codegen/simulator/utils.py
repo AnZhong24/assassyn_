@@ -1,6 +1,6 @@
 """Utility functions for simulator generation."""
 
-from ...dtype import DType, Void, ArrayType
+from ...dtype import DType, Void, ArrayType, Record, Bits
 from ...module import Port
 
 
@@ -36,6 +36,10 @@ def dtype_to_rust_type(dtype: DType) -> str:
 
     This matches the Rust function in src/backend/simulator/utils.rs
     """
+
+    if isinstance(dtype, Record):
+        dtype = Bits(dtype.bits)
+
     if dtype.is_int() or dtype.is_raw():
         prefix = "u" if not dtype.is_signed() or dtype.is_raw() else "i"
         bits = dtype.bits
