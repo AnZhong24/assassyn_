@@ -3,6 +3,8 @@ from assassyn.backend import elaborate
 from assassyn import utils
 import assassyn
 
+# TODO(@were): Make this barrier work with more careful tests.
+
 class Adder2(Module):
 
     def __init__(self):
