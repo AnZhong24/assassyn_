@@ -509,7 +509,7 @@ class PureIntrinsic(Expr):
         if self.opcode == PureIntrinsic.FIFO_PEEK:
             port = self.args[0]
             # pylint: disable=import-outside-toplevel
-            from ...module import Port
+            from ..module import Port
             assert isinstance(port, Port)
             return port.dtype.attributize(self, name)
 
