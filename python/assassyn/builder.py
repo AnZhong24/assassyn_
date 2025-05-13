@@ -19,6 +19,11 @@ if typing.TYPE_CHECKING:
 def ir_builder(func, *args, **kwargs):
     '''The decorator annotates the function whose return value will be inserted into the AST.'''
     res = func(*args, **kwargs)
+
+    # This indicates this res is handled somewhere else, so we do not need to rehandle it
+    if res is None:
+        return res
+
     #pylint: disable=cyclic-import,import-outside-toplevel
     from .ir.const import Const
     from .utils import package_path

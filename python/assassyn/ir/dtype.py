@@ -301,6 +301,10 @@ class RecordValue:
     def __repr__(self):
         return f'RecordValue({self._dtype}, {self._payload})'
 
+    def __call__(self, value):
+        '''The syntax sugar for creating a record value'''
+        return Bits(self._dtype.bits)(value)
+
     # A Python TIP: __getattr__ is a "fallback" method, when "name" attribute is not found in the
     # self object. However, __getattribute__ is a "hook" method, which is called when every a.b
     # field access is made. If you do anything like self.a in __getattribute__, it will cause a

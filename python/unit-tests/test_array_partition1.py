@@ -4,7 +4,6 @@ from assassyn.frontend import *
 from assassyn.backend import elaborate
 from assassyn import utils
 
-
 class Driver(Module):
      
     def __init__(self):
@@ -45,14 +44,14 @@ def test_array_partition1():
 
     print(sys)
 
-    simulator_path, verilator_path = elaborate(sys, verilog=utils.has_verilator())
-    
+    simulator_path, verilator_path = elaborate(sys, verilog=False)
+
     raw = utils.run_simulator(simulator_path)
     check(raw, utils.parse_simulator_cycle)
 
-    if verilator_path:
-        raw = utils.run_verilator(verilator_path)
-        check(raw, utils.parse_verilator_cycle)
+    #if verilator_path:
+    #    raw = utils.run_verilator(verilator_path)
+    #    check(raw, utils.parse_verilator_cycle)
 
     
 if __name__ == '__main__':

@@ -385,11 +385,21 @@ class CodeGen(visitor.Visitor):
             args = ', '.join(self.generate_rval(i) for i in node.args[1:])
             res = f'sys.{ib_method}(fmt, vec![{args}]);'
         elif isinstance(node, expr.ArrayRead):
-            arr = self.generate_rval(node.array)
+            # TODO(@were): This is a hack to workaround the array partitioning differently handled
+            # in our Python and Rust backends, which will be fully deprecated when fully ported
+            # to Python.
+            array = node.array
+            array = array if array.parent is None else array.parent
+            arr = self.generate_rval(array)
             idx = self.generate_rval(node.idx)
             res = f'sys.{ib_method}({arr}, {idx});'
         elif isinstance(node, expr.ArrayWrite):
-            arr = self.generate_rval(node.array)
+            # TODO(@were): This is a hack to workaround the array partitioning differently handled
+            # in our Python and Rust backends, which will be fully deprecated when fully ported
+            # to Python.
+            array = node.array
+            array = array if array.parent is None else array.parent
+            arr = self.generate_rval(array)
             idx = self.generate_rval(node.idx)
             val = self.generate_rval(node.val)
             res = f'sys.{ib_method}({arr}, {idx}, {val});'
