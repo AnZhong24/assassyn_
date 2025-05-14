@@ -7,7 +7,7 @@ from collections import defaultdict
 import typing
 from ...analysis import topo_downstream_modules
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
-from .node_dumper import externally_used_combinational
+from .node_dumper import expr_externally_used
 from ...builder import SysBuilder
 from ...ir.block import CycledBlock
 from ...ir.expr import Expr, FIFOPush
@@ -95,7 +95,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
             # Gather expressions with external visibility for downstream modules
             for expr in module.externals:
                 if isinstance(expr, Expr):
-                    if externally_used_combinational(expr):
+                    if expr_externally_used(expr):
                         expr_validities.add(expr)
                     else:
                         print('Not externally used!')

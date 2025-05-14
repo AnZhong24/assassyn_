@@ -28,11 +28,11 @@ from ...ir.expr import (
         Concat,
 )
 from .utils import namify, dtype_to_rust_type, fifo_name
-from .node_dumper import dump_rval_ref, externally_used_combinational
+from .node_dumper import dump_rval_ref
+from ...analysis import expr_externally_used
 
 if typing.TYPE_CHECKING:
     from ...ir.module import Module
-
 
 class ElaborateModule(Visitor):
     """Visitor for elaborating modules.
@@ -75,7 +75,7 @@ class ElaborateModule(Visitor):
         # Determine if the expression produces a value and if it needs exposure
         id_and_exposure = None
         if node.is_valued():
-            need_exposure = externally_used_combinational(node)
+            need_exposure = expr_externally_used(node)
             id_expr = namify(node.as_operand())
             id_and_exposure = (id_expr, need_exposure)
 

@@ -55,24 +55,3 @@ def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statemen
 
     # Default case
     return namify(unwrapped.as_operand())
-
-
-def externally_used_combinational(expr: Expr) -> list:
-    """Check if an expression is used outside its module.
-
-    This matches the Rust function in src/backend/simulator/elaborate.rs
-    """
-
-    # Push is NOT a combinational operation
-    if isinstance(expr, FIFOPush):
-        return False
-
-    this_module = expr.parent.module
-
-    # Check if any user is in a different module
-    for user in expr.users:
-        parent_module = user.user.parent.module
-        if parent_module != this_module:
-            return True
-
-    return False
