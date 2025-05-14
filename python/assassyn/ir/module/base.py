@@ -3,7 +3,7 @@
 from __future__ import annotations
 import typing
 
-from ...utils import identifierize, unwrap_operand
+from ...utils import namify, unwrap_operand, identifierize
 from ...builder import ir_builder
 from ..expr import PureIntrinsic, Operand, Expr
 
@@ -20,7 +20,7 @@ class ModuleBase:
 
     def as_operand(self):
         '''Dump the module as a right-hand side reference.'''
-        return f'_{identifierize(self)}'
+        return f'_{namify(identifierize(self))}'
 
     @ir_builder
     def triggered(self):

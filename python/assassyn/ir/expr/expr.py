@@ -9,7 +9,7 @@ import typing
 
 from ...builder import ir_builder
 from ..value import Value
-from ...utils import identifierize
+from ...utils import namify, identifierize
 
 if typing.TYPE_CHECKING:
     from ..array import Array
@@ -74,7 +74,7 @@ class Expr(Value):
 
     def as_operand(self):
         '''Dump the expression as an operand'''
-        return f'_{identifierize(self)}'
+        return f'_{namify(identifierize(self))}'
 
     def is_binary(self):
         '''If the opcode is a binary operator'''

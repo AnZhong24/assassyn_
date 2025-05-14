@@ -6,14 +6,14 @@ import os
 from collections import defaultdict
 import typing
 from ...analysis import topo_downstream_modules
-from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
+from .utils import dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from ...analysis import expr_externally_used
 from ...builder import SysBuilder
 from ...ir.block import CycledBlock
 from ...ir.expr import Expr, FIFOPush
 from ...ir.module import Downstream, Module, SRAM
 from ...ir.dtype import Int, UInt
-from ...utils import identifierize
+from ...utils import namify
 
 
 def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements

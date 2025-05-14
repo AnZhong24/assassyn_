@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 
 from ..builder import ir_builder, Singleton
-from ..utils import identifierize
+from ..utils import identifierize, namify
 
 if typing.TYPE_CHECKING:
     from .module.base import ModuleBase
@@ -44,7 +44,7 @@ class Block:
 
     def as_operand(self):
         '''Dump the block as an operand.'''
-        return f'_{identifierize(self)}'
+        return f'_{namify(identifierize(self))}'
 
     def insert(self, x, elem):
         '''Insert an instruction at the specified position.'''

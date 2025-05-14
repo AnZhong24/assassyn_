@@ -2,16 +2,7 @@
 
 from ...ir.dtype import DType, Void, ArrayType, Record, Bits
 from ...ir.module import Port
-
-
-
-def namify(name: str) -> str:
-    """Convert a name to a valid identifier.
-
-    This matches the Rust function in src/backend/simulator/utils.rs
-    """
-    return ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
-
+from ...utils import namify
 
 def camelize(name: str) -> str:
     """Convert a name to camelCase.

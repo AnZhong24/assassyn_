@@ -10,7 +10,7 @@ from ...ir.expr import Expr, Intrinsic, Operand
 from ...ir.array import Array
 from ...ir.module import Module, SRAM, Port, Downstream
 from ...ir.visitor import Visitor
-from ...utils import identifierize
+from ...utils import namify, identifierize
 
 from .utils import (
     bool_ty, declare_array, declare_in, declare_out, DisplayInstance, find_wait_until
@@ -18,9 +18,9 @@ from .utils import (
 from .visit_expr import visit_expr_impl, dump_ref, dump_arith_ref
 from .gather import Gather, ExternalUsage
 
-def fifo_name(fifo):
+def fifo_name(fifo: Port):
     """Get the name of a FIFO."""
-    return identifierize(fifo.name)
+    return namify(fifo.as_operand())
 
 class VerilogDumper(Visitor):
     """Dumps Verilog code for Assassyn modules."""
@@ -257,7 +257,7 @@ module {self.current_module} (
                 result.append(self.print_body(elem))
             
             value = wu_intrin.args[0].value
-            wait_until = f" && ({identifierize(str(value))})"
+            wait_until = f" && ({namify(value.as_operand())})"
             
         self.before_wait_until = False
         

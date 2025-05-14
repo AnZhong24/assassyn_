@@ -89,3 +89,10 @@ def create_and_clean_dir(dir_path: str):
         shutil.rmtree(dir_path)
     # Create the directory
     os.makedirs(dir_path, exist_ok=True)
+
+def namify(name: str) -> str:
+    """Convert a name to a valid identifier.
+
+    This matches the Rust function in src/backend/simulator/utils.rs
+    """
+    return ''.join(c if c.isalnum() or c == '_' else '_' for c in name)

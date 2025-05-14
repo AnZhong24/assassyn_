@@ -13,6 +13,7 @@ from ...ir.array import Array
 from ...ir.module import Port
 from ...ir.dtype import Int
 from ...ir import const
+from ...utils import namify
 
 from .utils import declare_logic, DisplayInstance, parse_format_string
 from .gather import Gather
@@ -22,7 +23,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     # Handle expressions that are externally used
     decl, expose = None, ""
     if expr.is_valued() and not isinstance(expr, Bind):
-        id_ = identifierize(str(expr))
+        id_ = namify(expr.as_operand())
         expose_str = ""
         if vd.external_usage.is_externally_used(expr):
             pred = vd.get_pred() or "1"
@@ -35,7 +36,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     expose_out_str = ""
     if expr in exposed_map:
         exposed_kind = exposed_map[expr]
-        id_ = identifierize(str(expr))
+        id_ = namify(str(expr).as_operand())
         if exposed_kind == "Output" or exposed_kind == "Inout":
             expose_out_str = f"  assign {id_}_exposed_o = {id_};\n"
     
@@ -109,7 +110,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
         array_idx = unwrap_operand(expr.idx)
         size = array_ref.size
         bits = array_ref.scalar_ty.bits
-        name = f"array_{identifierize(array_ref.name)}_q"
+        name = f"array_{namify(array_ref.name)}_q"
 
         if isinstance(array_idx, const.Const):
             imm = array_idx.value
@@ -127,7 +128,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     elif isinstance(expr, ArrayWrite):
         array = expr.array
         array_idx = expr.idx
-        array_name = identifierize(array.name)
+        array_name = namify(array.name)
         pred = vd.get_pred() or ""
         idx = dump_ref(vd.sys, array_idx, True)
         idx_bits = array_idx.dtype.bits
@@ -148,7 +149,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     
     elif isinstance(expr, FIFOPush):
         fifo = expr.fifo
-        fifo_name = f"{identifierize(fifo.module.name)}_{identifierize(fifo.name)}"
+        fifo_name = f"{namify(fifo.module.as_operand())}_{namify(fifo.as_operand())}"
         pred = vd.get_pred() or ""
         value = dump_ref(vd.sys, expr.val, False)
         
@@ -163,7 +164,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
         intrinsic = expr.opcode
         if intrinsic in (PureIntrinsic.FIFO_VALID, PureIntrinsic.FIFO_PEEK):
             fifo = expr.args[0]
-            fifo_name = identifierize(fifo.name)
+            fifo_name = namify(fifo.as_operand())
             
             if intrinsic == PureIntrinsic.FIFO_VALID:
                 body = f"fifo_{fifo_name}_pop_valid"
@@ -175,7 +176,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
             value_expr = value
             
             if value_expr.parent.module != expr.parent.module:
-                body = f"{identifierize(str(value_expr))}_valid"
+                body = f"{namify(str(value_expr).as_operand())}_valid"
             else:
                 pred = vd.get_pred() or ""
                 pred_str = f" && {pred}" if pred else ""
@@ -186,7 +187,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     
     elif isinstance(expr, AsyncCall):
         bind = expr.bind
-        callee = identifierize(bind.callee.name)
+        callee = namify(bind.callee.as_operand())
         pred = vd.get_pred() or ""
         
         if callee in vd.triggers:
@@ -309,11 +310,11 @@ def node_dump_ref(
 
     if isinstance(node, Array):
         array = node
-        return identifierize(array.name)
+        return namify(array.name.as_operand())
     
     elif isinstance(node, Port):
         fifo = node
-        return identifierize(fifo.name)
+        return namify(fifo.name.as_operand())
     
     elif isinstance(node, const.Const):
         int_imm = node
@@ -330,7 +331,7 @@ def node_dump_ref(
     
     elif isinstance(node, Expr):
         dtype = node.dtype
-        raw = identifierize(str(node))
+        raw = namify(node.as_operand())
         if isinstance(dtype, Int) and signed:
             return f"$signed({raw})"
         return raw

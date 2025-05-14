@@ -27,7 +27,8 @@ from ...ir.expr import (
         Slice,
         Concat,
 )
-from .utils import namify, dtype_to_rust_type, fifo_name
+from .utils import dtype_to_rust_type, fifo_name
+from ...utils import namify
 from .node_dumper import dump_rval_ref
 from ...analysis import expr_externally_used
 

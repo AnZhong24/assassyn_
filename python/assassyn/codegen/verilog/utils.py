@@ -8,7 +8,7 @@ from ...ir.module import Port, Module
 from ...ir.expr import Intrinsic
 from ...ir.dtype import DType, Int, UInt, Bits, Record
 from ...ir import const
-from ...utils import identifierize
+from ...utils import namify
 
 class DisplayInstance:
     """A display instance for a module element."""
@@ -25,13 +25,13 @@ class DisplayInstance:
     @classmethod
     def from_array(cls, array: Array) -> 'DisplayInstance':
         """Create a display instance from an array."""
-        return cls("array", identifierize(array.name))
+        return cls("array", namify(array.name))
     
     @classmethod
     def from_fifo(cls, fifo: Port, global_: bool) -> 'DisplayInstance':
         """Create a display instance from a FIFO."""
-        raw = identifierize(fifo.name)
-        fifo_name = f"{identifierize(fifo.module.name)}_{raw}" if global_ else raw
+        raw = namify(fifo.name)
+        fifo_name = f"{namify(fifo.module.name)}_{raw}" if global_ else raw
         return cls("fifo", fifo_name)
     
     def field(self, attr: str) -> str:
