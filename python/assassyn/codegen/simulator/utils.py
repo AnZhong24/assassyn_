@@ -4,6 +4,7 @@ from ...ir.dtype import DType, Void, ArrayType, Record, Bits
 from ...ir.module import Port
 
 
+
 def namify(name: str) -> str:
     """Convert a name to a valid identifier.
 
@@ -88,3 +89,4 @@ def fifo_name(fifo: Port):
     """
     module = fifo.module
     return f"{namify(module.name)}_{namify(fifo.name)}"
+

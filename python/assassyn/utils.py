@@ -3,6 +3,8 @@
 import timeit
 import os
 import subprocess
+import shutil
+
 
 def identifierize(obj):
     '''The helper function to get the identifier of the given object. You can change `id_slice`
@@ -79,3 +81,11 @@ def has_verilator():
     if verilator_root and os.path.isdir(verilator_root):
         return 'verilator'
     return None
+
+def create_and_clean_dir(dir_path: str):
+    """Create a directory and clear its contents if it already exists."""
+    if os.path.exists(dir_path):
+        # Remove all contents of the directory
+        shutil.rmtree(dir_path)
+    # Create the directory
+    os.makedirs(dir_path, exist_ok=True)

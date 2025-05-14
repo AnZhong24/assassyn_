@@ -1,13 +1,19 @@
 """Simulator generation for Assassyn."""
 
+from __future__ import annotations
+
 import os
 from collections import defaultdict
+import typing
+from ...analysis import topo_downstream_modules
 from .utils import namify, dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from .node_dumper import externally_used_combinational
 from ...builder import SysBuilder
 from ...ir.block import CycledBlock
 from ...ir.expr import Expr, FIFOPush
 from ...ir.module import Downstream, Module, SRAM
+from ...ir.dtype import Int, UInt
+from ...utils import identifierize
 
 
 def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-many-statements
@@ -138,7 +144,7 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     # TODO(@derui): Implement critical path analysis equivalent to Rust
 
     # Get topological order for downstream modules
-    downstreams = analyze_topological_order(sys)
+    downstreams = topo_downstream_modules(sys)
 
     # Module simulation functions
     simulators = []
@@ -290,46 +296,6 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     fd.write("}\n")
 
     return True
-
-
-def analyze_topological_order(sys):
-    """Analyze the topological order of modules.
-
-    This is a simplified implementation of the topo_sort function in Rust.
-    """
-
-    # Get all downstream modules
-    downstreams = sys.downstreams[:]
-
-    # Build dependency graph
-    graph = defaultdict(list)
-    in_degree = defaultdict(int)
-
-    for module in downstreams:
-        deps = set()
-        for elem in module.externals.keys():
-            if isinstance(elem, Expr):
-                depend = elem.parent.module
-                if isinstance(depend, Downstream):
-                    deps.add(depend)
-        for dep in deps:
-            graph[dep].append(module)
-            in_degree[module] += 1
-
-    # Topological sort
-    queue = [m for m in downstreams if in_degree[m] == 0]
-    result = []
-
-    while queue:
-        node = queue.pop(0)
-        result.append(node)
-
-        for neighbor in graph[node]:
-            in_degree[neighbor] -= 1
-            if in_degree[neighbor] == 0:
-                queue.append(neighbor)
-
-    return result
 
 
 def get_upstreams(module):
