@@ -5,6 +5,7 @@ from typing import Iterator, List, Optional, Tuple
 
 from ...ir.array import Array
 from ...ir.module import Port, Module
+from ...ir.expr import Intrinsic
 from ...ir.dtype import DType, Int, UInt, Bits, Record
 from ...ir import const
 from ...utils import identifierize
@@ -112,9 +113,10 @@ def type_to_fmt(ty: DType) -> str:
         return "d"
     raise ValueError(f"Invalid type for type: {ty}")
 
-def parse_format_string(args: List, sys) -> str:
+def parse_format_string(args: List) -> str:
     """Parse a format string for log statements."""
-    raw = isinstance(args[0], str)
+    assert isinstance(args[0], str)
+    raw = args[0]
     fmt = deque(raw)
     result = ""
     arg_idx = 1
@@ -126,7 +128,7 @@ def parse_format_string(args: List, sys) -> str:
                 fmt.popleft()
                 result += '{'
             else:
-                dtype = args[arg_idx].get_dtype(sys)
+                dtype = args[arg_idx].dtype
                 substr = ""
                 if not fmt:
                     raise ValueError("Invalid format string, missing closing brace")
@@ -181,3 +183,10 @@ def parse_format_string(args: List, sys) -> str:
             result += c
     
     return result
+
+def find_wait_until(module: Module) -> Optional[Intrinsic]:
+    for elem in module.body.body:
+        if isinstance(elem, Intrinsic):
+            if elem.opcode == Intrinsic.WAIT_UNTIL:
+                return elem
+    return None

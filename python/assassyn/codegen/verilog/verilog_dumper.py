@@ -5,14 +5,16 @@ import os
 from typing import Dict, List, Optional, Set, Tuple, Any
 
 from ...builder import SysBuilder
-from ...ir.block import Block
+from ...ir.block import Block, CondBlock
 from ...ir.expr import Expr, Intrinsic, Operand
 from ...ir.array import Array
-from ...ir.module import Module, SRAM, Port
+from ...ir.module import Module, SRAM, Port, Downstream
 from ...ir.visitor import Visitor
 from ...utils import identifierize
 
-from .utils import bool_ty, declare_array, declare_in, declare_out, DisplayInstance
+from .utils import (
+    bool_ty, declare_array, declare_in, declare_out, DisplayInstance, find_wait_until
+)
 from .visit_expr import visit_expr_impl, dump_ref, dump_arith_ref
 from .gather import Gather, ExternalUsage
 
@@ -60,14 +62,14 @@ class VerilogDumper(Visitor):
     
     def print_body(self, node) -> str:
         """Print the body of a node."""
-        if node.kind == NodeKind.EXPR:
-            expr = node.as_ref(Expr, self.sys)
+        if isinstance(node, Expr):
+            expr = node
             return self.visit_expr(expr) or ""
-        elif node.kind == NodeKind.BLOCK:
-            block = node.as_ref(Block, self.sys)
+        elif isinstance(node, Block):
+            block = node
             return self.visit_block(block) or ""
         else:
-            raise ValueError(f"Unexpected reference type: {node.kind}")
+            raise ValueError(f"Unexpected reference type: {node}")
     
     def dump_memory_nodes(self, node, res: str) -> None:
         """Dump memory nodes."""
@@ -140,8 +142,8 @@ module {self.current_module} (
                 result.append(declare_in(bool_ty(), display.field("push_ready")))
             
             elif isinstance(interf, Array):
-                array = inferf
-                display = utils.DisplayInstance.from_array(array)
+                array = interf
+                display = DisplayInstance.from_array(array)
                 result.append(f"  /* {array} */")
                 
                 # Check for memory parameters
@@ -166,8 +168,8 @@ module {self.current_module} (
                         result.append(declare_out(array.get_idx_type(), display.field("widx")))
                         result.append(declare_out(array.scalar_ty, display.field("d")))
             
-            elif interf.kind == NodeKind.MODULE:
-                module_ref = interf.as_ref(Module, self.sys)
+            elif isinstance(interf, Module):
+                module_ref = interf
                 display = utils.DisplayInstance.from_module(module_ref)
                 result.append(f"  // Module {module_ref.name}")
                 
@@ -175,28 +177,31 @@ module {self.current_module} (
                 result.append(declare_out(Int(8), display.field("counter_delta")))
                 result.append(declare_in(bool_ty(), display.field("counter_delta_ready")))
             
-            elif interf.kind == NodeKind.EXPR:
+            elif isinstance(interf, Expr):
                 # Handled below in module_expr_map
                 pass
             
             else:
-                raise ValueError(f"Unknown interf kind {interf.kind}")
+                raise ValueError(f"Unknown interf kind {type(interf)}")
             
             result.append("")
         
         # Downstream upstream signals
-        if module.is_downstream:
+        if isinstance(module, Downstream):
             result.append("  // Declare upstream executed signals")
             for upstream in upstreams(module, self.topo):
                 name = identifierize(upstream.as_ref(Module, module.sys).name)
                 result.append(declare_in(bool_ty(), f"{name}_executed"))
+        else:
+            result.append("  assign executed = counter_pop_valid{wait_until};")
+            result.append("  assign counter_pop_ready = executed;")
         
         # External usage out bounds
         out_bounds = self.external_usage.out_bounds(module)
         if out_bounds:
             for elem in out_bounds:
                 id_ = identifierize(str(elem))
-                dtype = elem.get_dtype(module.sys)
+                dtype = elem.dtype
                 result.append(declare_out(dtype, f"expose_{id_}"))
                 result.append(declare_out(bool_ty(), f"expose_{id_}_valid"))
         
@@ -205,7 +210,7 @@ module {self.current_module} (
         if in_bounds:
             for elem in in_bounds:
                 id_ = identifierize(str(elem))
-                dtype = elem.get_dtype(module.sys)
+                dtype = elem.dtype
                 result.append(declare_in(dtype, id_))
                 result.append(declare_in(bool_ty(), f"{id_}_valid"))
         
@@ -213,10 +218,10 @@ module {self.current_module} (
         if module in self.module_expr_map:
             exposed_map = self.module_expr_map[module]
             for exposed_node, kind in exposed_map.items():
-                if exposed_node.kind == NodeKind.EXPR:
-                    expr = exposed_node.as_ref(Expr, self.sys)
+                if isinstance(exposed_node, Expr):
+                    expr = exposed_node
                     id_ = identifierize(str(expr))
-                    dtype = exposed_node.get_dtype(self.sys)
+                    dtype = exposed_node.dtype
                     bits = dtype.bits - 1
                     
                     if kind == "Output" or kind == "Inout":
@@ -227,7 +232,7 @@ module {self.current_module} (
                         result.append(f"  input logic {id_}_exposed_i_valid,")
         
         # Event queue for non-downstream modules
-        if not module.is_downstream:
+        if not isinstance(module, Downstream):
             result.append("  // self.event_q")
             result.append("  input logic counter_pop_valid,")
             result.append("  input logic counter_delta_ready,")
@@ -239,20 +244,19 @@ module {self.current_module} (
         # Wait until handling
         wait_until = ""
         skip = 0
-        
-        if module.body.has_wait_until():
-            wu_intrin = module.body.get_wait_until()
+
+        wu_intrin = find_wait_until(module)
+        if wu_intrin is not None:
             self.before_wait_until = True
             
-            body_iter = module.body.body_iter()
+            body_iter = module.body.body
             for i, elem in enumerate(body_iter):
-                if elem == wu_intrin:
+                if id(elem) == id(wu_intrin):
                     skip = i + 1
                     break
                 result.append(self.print_body(elem))
             
-            bi = wu_intrin.as_ref(Intrinsic, self.sys)
-            value = bi.operands[0].value
+            value = wu_intrin.args[0].value
             wait_until = f" && ({identifierize(str(value))})"
             
         self.before_wait_until = False
@@ -278,7 +282,7 @@ module {self.current_module} (
             result.append(f"  logic [{memory_params.width - 1}:0] dataout;")
             self.dump_memory_nodes(module.body, result)
         else:
-            for elem in list(module.body.body_iter())[skip:]:
+            for elem in list(module.body.body)[skip:]:
                 result.append(self.print_body(elem))
         
         # Generate triggers
@@ -337,7 +341,7 @@ module {self.current_module} (
   """)
         
         # Executed logic
-        if not module.is_downstream:
+        if not isinstance(module, Downstream):
             result.append(f"  assign executed = counter_pop_valid{wait_until};")
             result.append("  assign counter_pop_ready = executed;")
         else:
@@ -410,15 +414,15 @@ module memory_blackbox_{a} #(
         
         return "\n".join(result)
     
-    def visit_block(self, block) -> Optional[str]:
+    def visit_block(self, block: Block) -> Optional[str]:
         """Visit a block and generate Verilog code."""
         result = []
         skip = 0
         
         # Handle block condition
-        if block.condition:
-            cond = block.condition
-            dtype = cond.get_dtype(block.sys)
+        if isinstance(block, CondBlock):
+            cond = block.cond
+            dtype = cond.dtype
             
             if dtype.bits == 1:
                 pred = dump_ref(self.sys, cond, True)
@@ -427,7 +431,7 @@ module memory_blackbox_{a} #(
                 
             self.pred_stack.append(pred)
             skip = 1
-            
+        
         # Handle cycled block
         elif block.cycle is not None:
             cycle = block.cycle
@@ -435,15 +439,15 @@ module memory_blackbox_{a} #(
             skip = 1
         
         # Process block body
-        for elem in list(block.body_iter())[skip:]:
-            if elem.kind == NodeKind.EXPR:
-                expr = elem.as_ref(Expr, self.sys)
+        for elem in list(block.body)[skip:]:
+            if isinstance(elem, Expr):
+                expr = elem
                 result.append(self.visit_expr(expr) or "")
-            elif elem.kind == NodeKind.BLOCK:
-                sub_block = elem.as_ref(Block, self.sys)
+            elif isinstance(elem, Block):
+                sub_block = elem
                 result.append(self.visit_block(sub_block) or "")
             else:
-                raise ValueError(f"Unexpected reference type: {elem.kind}")
+                raise ValueError(f"Unexpected reference type: {type(elem)}")
         
         if skip > 0:
             self.pred_stack.pop()

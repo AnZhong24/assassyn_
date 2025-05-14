@@ -2,23 +2,26 @@
 
 from typing import Dict, Optional, Tuple
 
-from ...utils import identifierize
+from ...utils import identifierize, unwrap_operand
 from ...builder import SysBuilder
 from ...ir.expr import (
     Expr, BinaryOp, UnaryOp, FIFOPop, Log, ArrayRead, ArrayWrite,
     FIFOPush, PureIntrinsic, AsyncCall, Slice, Concat, Cast, Select,
     Select1Hot, Intrinsic, Bind
 )
+from ...ir.array import Array
+from ...ir.module import Port
+from ...ir.dtype import Int
 from ...ir import const
 
-from .utils import declare_logic
+from .utils import declare_logic, DisplayInstance, parse_format_string
 from .gather import Gather
 
 def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     """Implement the visit_expr method for the VerilogDumper."""
     # Handle expressions that are externally used
     decl, expose = None, ""
-    if expr.is_valued() and expr.opcode != Opcode.BIND:
+    if expr.is_valued() and not isinstance(expr, Bind):
         id_ = identifierize(str(expr))
         expose_str = ""
         if vd.external_usage.is_externally_used(expr):
@@ -40,33 +43,26 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     body = ""
     
     # Handle different expression types
-    if isinstance(expr, Binary):
+    if isinstance(expr, BinaryOp):
         binop = expr.opcode
         dtype = expr.dtype
         a = dump_arith_ref(vd.sys, expr.lhs)
-        
-        op_str = str(binop)
-        if binop == Opcode.SHR:
-            op_str = ">>>" if dtype.is_signed else ">>"
+        op_str = BinaryOp.OPERATORS[expr.opcode]
+        if binop == BinaryOp.SHR:
+            op_str = ">>>" if dtype.is_signed() else ">>"
             
         b = dump_arith_ref(vd.sys, expr.rhs)
         body = f"{a} {op_str} {b}"
     
-    elif isinstance(expr, Unary):
+    elif isinstance(expr, UnaryOp):
         uop = expr.opcode
-        op_str = "~" if uop == Opcode.FLIP else "-"
+        op_str = "~" if uop == UnaryOp.FLIP else "-"
         x = dump_arith_ref(vd.sys, expr.x)
         body = f"{op_str}{x}"
     
-    elif isinstance(expr, Compare):
-        a = dump_arith_ref(vd.sys, expr.lhs)
-        op_str = str(expr.opcode)
-        b = dump_arith_ref(vd.sys, expr.rhs)
-        body = f"{a} {op_str} {b}"
-    
     elif isinstance(expr, FIFOPop):
         fifo = expr.fifo
-        display = utils.DisplayInstance.from_fifo(fifo, False)
+        display = DisplayInstance.from_fifo(fifo, False)
         pred = vd.get_pred() or ""
         pred_str = f" && {pred}" if pred else ""
         is_pop = f"  assign {display.field('pop_ready')} = executed{pred_str};"
@@ -86,7 +82,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
         res.append(f"  always_ff @(posedge clk) if ({condition})")
         
         args = [arg for arg in expr.operands]
-        format_str = utils.parse_format_string(args, expr.sys)
+        format_str = parse_format_string(args)
         
         res.append(f"$display(\"%t\\t[{vd.current_module}]\\t\\t")
         res.append(format_str)
@@ -110,15 +106,15 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     
     elif isinstance(expr, ArrayRead):
         array_ref = expr.array
-        array_idx = expr.idx
+        array_idx = unwrap_operand(expr.idx)
         size = array_ref.size
         bits = array_ref.scalar_ty.bits
         name = f"array_{identifierize(array_ref.name)}_q"
 
-        if array_idx.kind == NodeKind.INT_IMM:
+        if isinstance(array_idx, const.Const):
             imm = array_idx.value
             body = f"{name}[{bits * (imm + 1) - 1}:{imm * bits}]"
-        elif array_idx.kind == NodeKind.EXPR:
+        elif isinstance(array_idx, Expr):
             res = "'x"
             idx = dump_ref(vd.sys, array_idx, True)
             for i in range(size):
@@ -126,7 +122,7 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
                 res = f"{i} == {idx} ? {slice_} : ({res})"
             body = res
         else:
-            raise ValueError(f"Unexpected reference type: {array_idx.kind}")
+            raise ValueError(f"Unexpected reference type: {array_idx}")
     
     elif isinstance(expr, ArrayWrite):
         array = expr.array
@@ -134,9 +130,9 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
         array_name = identifierize(array.name)
         pred = vd.get_pred() or ""
         idx = dump_ref(vd.sys, array_idx, True)
-        idx_bits = array_idx.get_dtype(vd.sys).bits
+        idx_bits = array_idx.dtype.bits
         value = dump_ref(vd.sys, expr.val, True)
-        value_bits = expr.val.get_dtype(vd.sys).bits
+        value_bits = expr.val.dtype.bits
         
         if array_name in vd.array_stores:
             g_idx, g_value = vd.array_stores[array_name]
@@ -159,22 +155,22 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
         if fifo_name in vd.fifo_pushes:
             vd.fifo_pushes[fifo_name].push(pred, value, fifo.scalar_ty.bits)
         else:
-            vd.fifo_pushes[fifo_name] = Gather(pred, value, fifo.scalar_ty.bits)
+            vd.fifo_pushes[fifo_name] = Gather(pred, value, fifo.dtype.bits)
         
         body = ""
     
     elif isinstance(expr, PureIntrinsic):
         intrinsic = expr.opcode
-        if intrinsic in (Opcode.FIFO_VALID, Opcode.FIFO_PEEK):
-            fifo = expr.operands[0].value
+        if intrinsic in (PureIntrinsic.FIFO_VALID, PureIntrinsic.FIFO_PEEK):
+            fifo = expr.args[0]
             fifo_name = identifierize(fifo.name)
             
-            if intrinsic == Opcode.FIFO_VALID:
+            if intrinsic == PureIntrinsic.FIFO_VALID:
                 body = f"fifo_{fifo_name}_pop_valid"
-            elif intrinsic == Opcode.FIFO_PEEK:
+            elif intrinsic == PureIntrinsic.FIFO_PEEK:
                 body = f"fifo_{fifo_name}_pop_data"
         
-        elif intrinsic == Opcode.VALUE_VALID:
+        elif intrinsic == PureIntrinsic.VALUE_VALID:
             value = expr.operands[0].value
             value_expr = value
             
@@ -308,15 +304,18 @@ def node_dump_ref(
     signed: bool
 ) -> Optional[str]:
     """Dump a reference to a node with options."""
-    if node.kind == NodeKind.ARRAY:
+
+    node = unwrap_operand(node)
+
+    if isinstance(node, Array):
         array = node
         return identifierize(array.name)
     
-    elif node.kind == NodeKind.FIFO:
+    elif isinstance(node, Port):
         fifo = node
         return identifierize(fifo.name)
     
-    elif node.kind == NodeKind.INT_IMM:
+    elif isinstance(node, const.Const):
         int_imm = node
         dbits = int_imm.dtype.bits
         value = int_imm.value
@@ -325,18 +324,16 @@ def node_dump_ref(
             return f"{dbits}'d{value}"
         return str(value)
     
-    elif node.kind == NodeKind.STR_IMM:
-        str_imm = node
-        value = str_imm.value
+    elif isinstance(node, str):
+        value = node
         return f'"{value}"'
     
-    elif node.kind == NodeKind.EXPR:
-        dtype = node.get_dtype(sys)
+    elif isinstance(node, Expr):
+        dtype = node.dtype
         raw = identifierize(str(node))
-        
         if isinstance(dtype, Int) and signed:
             return f"$signed({raw})"
         return raw
-    
+
     else:
-        raise ValueError(f"Unknown node of kind {node.kind}")
+        raise ValueError(f"Unknown node of kind {type(node).__name__}")
