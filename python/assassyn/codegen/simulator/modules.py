@@ -75,7 +75,7 @@ class ElaborateModule(Visitor):
         # Determine if the expression produces a value and if it needs exposure
         id_and_exposure = None
         if node.is_valued():
-            need_exposure = expr_externally_used(node)
+            need_exposure = expr_externally_used(node, True)
             id_expr = namify(node.as_operand())
             id_and_exposure = (id_expr, need_exposure)
 

@@ -5,7 +5,6 @@ from ...utils import unwrap_operand
 from ...ir.expr import Expr
 from ...ir.array import Array
 from ...ir.const import Const
-from ...ir.expr import FIFOPush
 from ...ir.module import Module, Port
 
 def dump_rval_ref( # pylint: disable=too-many-branches, too-many-return-statements

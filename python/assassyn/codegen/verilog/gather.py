@@ -64,42 +64,29 @@ class ExternalUsage:
         """Get expressions used externally from this module."""
         if module in self.expr_externally_used:
             return self.expr_externally_used[module]
-        return None
+        return set()
     
     def in_bounds(self, module: Module):
         """Get external expressions used by this module."""
         if module in self.module_use_external_expr:
             return self.module_use_external_expr[module]
-        return None
-
-    def visit_expr(self, expr: Expr) -> None:
-        """Visit an expression to check for external usage."""
-        module = expr.parent.module
-        externals = set()
-        
-        for user in expr.users:
-            user_expr = user.get_expr()
-            ext_module = user_expr.parent.module
-            if ext_module != module:
-                externals.add(ext_module)
-        
-        if not expr.is_valued() or expr.opcode == Opcode.BIND:
-            return
-        
-        if externals:
-            self.expr_externally_used[module].add(expr)
-            
-            for elem in externals:
-                self.module_use_external_expr[elem].add(expr)
-    
-    def enter(self, sys: SysBuilder):
-        """Entry point for visiting the system."""
-        for module in sys.modules:
-            for expr in module.collect_expressions():
-                self.visit_expr(expr)
+        return set()
 
 def gather_exprs_externally_used(sys: SysBuilder) -> ExternalUsage:
     """Gather all expressions used by external modules."""
+    from ...analysis import analyze_bidirectional_external_usage
+
+    temp = analyze_bidirectional_external_usage(sys)
+
     result = ExternalUsage()
-    result.enter(sys)
+    result.module_use_external_expr = temp.module_uses_expr
+
+    in_bounds = {}
+    for expr, modules in temp.expr_used_by_module.items():
+        if expr.parent.module not in in_bounds:
+            in_bounds[expr.parent.module] = set()
+        in_bounds[expr.parent.module] = in_bounds[expr.parent.module].union(modules)
+
+    result.expr_externally_used = in_bounds
+
     return result

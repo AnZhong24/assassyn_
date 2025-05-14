@@ -4,6 +4,7 @@ import os
 import shutil
 from typing import Dict, List, Optional, Set, Tuple, Any
 
+from ...ir.expr import Expr
 from ...builder import SysBuilder
 from ...analysis import topo_downstream_modules
 
@@ -67,10 +68,9 @@ def elaborate(sys: SysBuilder, **kwargs) -> str:
     module_expr_map = {}
     for module in sys.modules:
         exposed_map = {}
-        for expr in module.collect_expressions():
-            for node, kind in sys.exposed_nodes:
-                if node == expr:
-                    exposed_map[expr] = kind
+        for node, kind in sys.exposed_nodes:
+            if isinstance(node, Expr) and node.parent.module == module:
+                exposed_map[node] = kind
         if exposed_map:
             module_expr_map[module] = exposed_map
     

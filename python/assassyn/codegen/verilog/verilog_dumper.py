@@ -7,11 +7,12 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 from ...builder import SysBuilder
 from ...ir.block import Block
 from ...ir.expr import Expr, Intrinsic, Operand
-from ...ir.module import Module
+from ...ir.array import Array
+from ...ir.module import Module, SRAM, Port
 from ...ir.visitor import Visitor
 from ...utils import identifierize
 
-from .utils import bool_ty, declare_array, declare_in, declare_out
+from .utils import bool_ty, declare_array, declare_in, declare_out, DisplayInstance
 from .visit_expr import visit_expr_impl, dump_ref, dump_arith_ref
 from .gather import Gather, ExternalUsage
 
@@ -47,9 +48,8 @@ class VerilogDumper(Visitor):
         """Collect array memory parameters."""
         result = {}
         for module in sys.modules:
-            for attr in module.attrs:
-                if isinstance(attr, MemoryParams):
-                    result[module.payload] = attr
+            if isinstance(module, SRAM):
+                result[module.payload] = module
         return result
     
     def get_pred(self) -> Optional[str]:
@@ -82,7 +82,7 @@ class VerilogDumper(Visitor):
         with open(runtime_path, "r") as src:
             fd.write(src.read())
     
-    def visit_module(self, module) -> Optional[str]:
+    def visit_module(self, module: Module) -> Optional[str]:
         """Visit a module and generate Verilog code."""
         self.current_module = identifierize(module.name)
         
@@ -96,10 +96,10 @@ module {self.current_module} (
 """)
         
         # FIFO ports
-        for port in module.fifo_iter():
+        for port in module.ports:
             name = fifo_name(port)
-            ty = port.scalar_ty
-            display = utils.DisplayInstance.from_fifo(port, False)
+            ty = port.dtype
+            display = DisplayInstance.from_fifo(port, False)
             
             result.append(f"  // Port FIFO {name}")
             result.append(declare_in(bool_ty(), display.field("pop_valid")))
@@ -109,38 +109,38 @@ module {self.current_module} (
         # Memory parameters
         has_memory_params = False
         has_memory_init_path = False
-        empty_pins = MemoryPins(
-            unknown(),  # array
-            unknown(),  # re
-            unknown(),  # we
-            unknown(),  # addr
-            unknown(),  # wdata
-        )
+        empty_pins = {
+            'array': None,
+            're': None,
+            'we': None,
+            'addr': None,
+            'wdata': None,
+        }
         
-        memory_params = MemoryParams(
-            0,          # width
-            0,          # depth
-            range(0, 1),  # lat
-            None,       # init_file
-            empty_pins, # pins
-        )
+        memory_params = {
+            'width': 0,
+            'depth': 0,
+            'lat': range(0, 1),
+            'init_file': None,
+            'pins': empty_pins,
+        }
         
         init_file_path = self.config.get("resource_base", ".")
         
         # External interfaces
-        for interf, ops in module.ext_interf_iter():
-            if interf.kind == NodeKind.FIFO:
-                fifo = interf.as_ref(FIFO, self.sys)
+        for interf, ops in module.externals:
+            if isinstance(interf, Port):
+                fifo = interf
                 parent_name = fifo.module.name
-                display = utils.DisplayInstance.from_fifo(fifo, True)
-                
+                display = DisplayInstance.from_fifo(fifo, True)
+
                 result.append(f"  // External FIFO {parent_name}.{fifo.name}")
                 result.append(declare_out(bool_ty(), display.field("push_valid")))
                 result.append(declare_out(fifo.scalar_ty, display.field("push_data")))
                 result.append(declare_in(bool_ty(), display.field("push_ready")))
             
-            elif interf.kind == NodeKind.ARRAY:
-                array = interf.as_ref(Array, self.sys)
+            elif isinstance(interf, Array):
+                array = inferf
                 display = utils.DisplayInstance.from_array(array)
                 result.append(f"  /* {array} */")
                 

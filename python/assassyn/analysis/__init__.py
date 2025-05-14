@@ -1,8 +1,9 @@
 """Analysis utilities for Assassyn."""
 
-from collections import defaultdict
-from .ir.expr import Expr
-from .ir.module import Downstream
+from ..ir.expr import Expr
+from ..ir.module import Downstream
+
+from .external_usage import expr_externally_used, analyze_bidirectional_external_usage
 
 
 def topo_downstream_modules(sys):
@@ -14,8 +15,8 @@ def topo_downstream_modules(sys):
     downstreams = sys.downstreams[:]
 
     # Build dependency graph
-    graph = defaultdict(list)
-    in_degree = defaultdict(int)
+    graph = {}
+    in_degree = {}
 
     for module in downstreams:
         deps = set()
@@ -42,24 +43,3 @@ def topo_downstream_modules(sys):
                 queue.append(neighbor)
 
     return result 
-
-def expr_externally_used(expr: Expr) -> typing.Set[Module]:
-    """Check if an expression is used outside its module.
-    Returns the module uses this expression.
-    """
-
-    # Push is NOT a combinational operation
-    if isinstance(expr, FIFOPush):
-        return False
-
-    this_module = expr.parent.module
-
-    res = set()
-
-    # Check if any user is in a different module
-    for user in expr.users:
-        user_parent_module = user.user.parent.module
-        if user_parent_module != this_module:
-            res.add(user_parent_module)
-
-    return res

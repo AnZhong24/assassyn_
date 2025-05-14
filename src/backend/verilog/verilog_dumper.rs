@@ -1,3 +1,6 @@
+use crate::ir::module::attrs::MemoryParams;
+use crate::ir::module::attrs::MemoryPins;
+
 impl VerilogDumper<'_, '_> {
   fn print_body(&mut self, node: BaseNode) -> String {
     match node.get_kind() {
