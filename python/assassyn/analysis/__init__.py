@@ -1,6 +1,6 @@
 """Analysis utilities for Assassyn."""
 
-from ..ir.expr import Expr
+from ..ir.expr import Expr, FIFOPush
 from ..ir.module import Downstream
 
 from .external_usage import expr_externally_used, analyze_bidirectional_external_usage
@@ -43,3 +43,17 @@ def topo_downstream_modules(sys):
                 queue.append(neighbor)
 
     return result 
+
+
+def get_upstreams(module):
+    """Get upstream modules of a given module.
+    This matches the upstreams function in Rust.
+    """
+    res = set()
+
+    for elem in module.externals.keys():
+        if isinstance(elem, Expr):
+            if not isinstance(elem, FIFOPush):
+                res.add(elem.parent.module)
+
+    return res

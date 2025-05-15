@@ -6,7 +6,7 @@ import typing
 
 from ..builder import ir_builder, Singleton
 from .dtype import to_uint, RecordValue
-from .expr import ArrayRead, ArrayWrite
+from .expr import ArrayRead, ArrayWrite, Expr
 from .value import Value
 from ..utils import identifierize
 
@@ -51,6 +51,7 @@ class Array:  #pylint: disable=too-many-instance-attributes
     initializer: list  # Initial values for the array elements
     attr: list  # Attributes of the array
     parent: typing.Optional[Array]  # Parent array for partitioned arrays
+    _users: typing.List[Expr]  # Users of the array
     _name: str  # Internal name storage
     _partition: list # Partitioned arrays
 
@@ -86,6 +87,7 @@ class Array:  #pylint: disable=too-many-instance-attributes
         self.attr = []
         self._name = None
         self._partition = None
+        self._users = []
         if partition == 'full':
             self._partition = []
             self.attr = [self.FULLY_PARTITIONED]
@@ -94,6 +96,11 @@ class Array:  #pylint: disable=too-many-instance-attributes
                 self._partition.append(Array(scalar_ty, 1, [init], None))
                 self._partition[i].name = f'{self.name}_{i}'
                 self._partition[i].parent = self
+
+    @property
+    def users(self):
+        '''Get the users of the array.'''
+        return self._users
 
     def __repr__(self):
         res = f'array {self.name}[{self.scalar_ty}; {self.size}] ='
@@ -109,6 +116,12 @@ class Array:  #pylint: disable=too-many-instance-attributes
         '''Get the number of bits needed to index the array.'''
         is_p2 = self.size & (self.size - 1) == 0
         return self.size.bit_length() - is_p2
+    
+    def index_type(self):
+        '''Get the type of the index.'''
+        #pylint: disable=import-outside-toplevel
+        from .dtype import UInt
+        return UInt(self.index_bits)
 
     @ir_builder
     def __getitem__(self, index):
@@ -129,6 +142,10 @@ class Array:  #pylint: disable=too-many-instance-attributes
         for i in range(self.size):
             cases[to_uint(i, self.index_bits)] = self._partition[i].__getitem__(0)
         return index.case(cases)
+    
+    def get_flattened_size(self):
+        '''Get the flattened size of the array.'''
+        return self.size * self.scalar_ty.bits
 
     @ir_builder
     def __setitem__(self, index, value):
@@ -154,3 +171,4 @@ class Array:  #pylint: disable=too-many-instance-attributes
                 self._partition[i].__setitem__(0, value)
 
         return None
+

@@ -22,7 +22,7 @@ def expr_externally_used(expr: Expr, exclude_push: bool) -> typing.Set[Module]:
 
     # Check if any user is in a different module
     for user in expr.users:
-        user_parent_module = user.user.parent.module
+        user_parent_module = user.parent.module
         if user_parent_module != this_module:
             res.add(user_parent_module)
 

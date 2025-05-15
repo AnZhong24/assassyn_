@@ -7,8 +7,7 @@ from ...ir.array import Array
 from ...ir.module import Port, Module
 from ...ir.expr import Intrinsic
 from ...ir.dtype import DType, Int, UInt, Bits, Record
-from ...ir import const
-from ...utils import namify
+from ...utils import namify, identifierize
 
 class DisplayInstance:
     """A display instance for a module element."""

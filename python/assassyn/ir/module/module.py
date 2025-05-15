@@ -8,7 +8,7 @@ from decorator import decorator
 from ...builder import Singleton, ir_builder
 from ...utils import namify
 from ..block import Block
-from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall
+from ..expr import Bind, FIFOPop, PureIntrinsic, FIFOPush, AsyncCall, Expr
 from ..expr.intrinsic import wait_until
 from .base import ModuleBase
 
@@ -37,6 +37,7 @@ class Module(ModuleBase):
     name: str  # Name of the module
     _attrs: dict  # Dictionary of module attributes
     _ports: list  # List of ports
+    _users: typing.List[Expr]  # Callers of this module
 
     ATTR_DISABLE_ARBITER = 1
     ATTR_TIMING = 2
@@ -75,9 +76,15 @@ class Module(ModuleBase):
             port.name = name
             port.module = self
             self._ports.append(getattr(self, name))
+        self._users = []
 
         assert Singleton.builder is not None, 'Cannot instantitate a module outside of a system!'
         Singleton.builder.modules.append(self)
+
+    @property
+    def users(self):
+        '''The helper function to get all the users of this module.'''
+        return self._users
 
     @property
     def ports(self):
@@ -162,6 +169,7 @@ class Port:
     dtype: DType  # Data type of the port
     name: str  # Name of the port
     module: Module  # Module this port belongs to
+    _users: typing.List[Expr]  # Users of the port
 
     def __init__(self, dtype: DType):
         #pylint: disable=import-outside-toplevel
@@ -169,6 +177,12 @@ class Port:
         assert isinstance(dtype, DType)
         self.dtype = dtype
         self.name = self.module = None
+        self._users = []
+
+    @property
+    def users(self):
+        '''Get the users of the port.'''
+        return self._users
 
     @ir_builder
     def valid(self):

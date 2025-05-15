@@ -25,8 +25,6 @@ class Operand:
     def __init__(self, value: Value, user: Expr):
         self._value = value
         self._user = user
-        if isinstance(value, Expr):
-            value.users.append(self)
 
     @property
     def value(self):
@@ -55,10 +53,20 @@ class Expr(Value):
 
     def __init__(self, opcode, operands: list):
         '''Initialize the expression with an opcode'''
+        #pylint: disable=import-outside-toplevel
+        from ..array import Array
+        from ..module import Port
         self.opcode = opcode
         self.loc = self.parent = None
         # NOTE: We only wrap values in Operand, not Ports or Arrays
-        self._operands = [Operand(i, self) if isinstance(i, Value) else i for i in operands]
+        self._operands = []
+        for i in operands:
+            wrapped = i
+            if isinstance(i, (Expr, Array, Port)):
+                i.users.append(self)
+            if isinstance(i, Value):
+                wrapped = Operand(i, self)
+            self._operands.append(wrapped)
         self.users = []
 
     def get_operand(self, idx: int):
@@ -604,6 +612,7 @@ class AsyncCall(Expr):
 
     def __init__(self, bind: Bind):
         super().__init__(AsyncCall.ASYNC_CALL, [bind])
+        bind.callee.users.append(self)
 
     @property
     def bind(self) -> Bind:

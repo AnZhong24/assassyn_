@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 import typing
-from ...analysis import topo_downstream_modules
+from ...analysis import topo_downstream_modules, get_upstreams
 from .utils import dtype_to_rust_type, int_imm_dumper_impl, fifo_name
 from ...analysis import expr_externally_used
 from ...builder import SysBuilder
@@ -296,20 +296,6 @@ def dump_simulator( #pylint: disable=too-many-locals, too-many-branches, too-man
     fd.write("}\n")
 
     return True
-
-
-def get_upstreams(module):
-    """Get upstream modules of a given module.
-    This matches the upstreams function in Rust.
-    """
-    res = set()
-
-    for elem in module.externals.keys():
-        if isinstance(elem, Expr):
-            if not isinstance(elem, FIFOPush):
-                res.add(elem.parent.module)
-
-    return res
 
 
 def dump_main(fd):

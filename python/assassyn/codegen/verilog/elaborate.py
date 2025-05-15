@@ -11,7 +11,7 @@ from ...analysis import topo_downstream_modules
 from .gather import gather_exprs_externally_used
 from .verilog_dumper import VerilogDumper, generate_cpp_testbench
 
-from ...utils import create_and_clean_dir
+from ...utils import create_and_clean_dir, repo_path
 
 def elaborate(sys: SysBuilder, **kwargs) -> str:
     """Elaborate the system into Verilog.
@@ -44,7 +44,7 @@ def elaborate(sys: SysBuilder, **kwargs) -> str:
     }
     
     # Create output directory
-    verilog_dir = os.path.join(kwargs.get("output_dir", "."), "verilog")
+    verilog_dir = os.path.join(kwargs.get('path', os.getcwd()), f"{sys.name}_verilog")
     create_and_clean_dir(verilog_dir)
     
     # Generate full path for the output file
@@ -52,7 +52,7 @@ def elaborate(sys: SysBuilder, **kwargs) -> str:
     print(f"Writing verilog rtl to {verilog_file}")
     
     # Generate C++ testbench if needed
-    generate_cpp_testbench(verilog_dir, sys, config)
+    generate_cpp_testbench(verilog_dir, sys, kwargs)
    
     # Calculate topological order of modules
     topo = topo_downstream_modules(sys)
