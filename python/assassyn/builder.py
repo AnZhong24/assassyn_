@@ -8,6 +8,7 @@ import typing
 import site
 import inspect
 from decorator import decorator
+import ast
 
 if typing.TYPE_CHECKING:
     from .ir.module import Module
@@ -15,11 +16,18 @@ if typing.TYPE_CHECKING:
     from .ir.dtype import DType
     from .ir.value import Value
 
+global LAST_RES
+global LAST_RES_LINENO
+
+LAST_RES = None
+LAST_RES_LINENO = None
+
+
 @decorator
 def ir_builder(func, *args, **kwargs):
     '''The decorator annotates the function whose return value will be inserted into the AST.'''
     res = func(*args, **kwargs)
-
+    global LAST_RES, LAST_RES_LINENO
     # This indicates this res is handled somewhere else, so we do not need to rehandle it
     if res is None:
         return res
@@ -39,6 +47,7 @@ def ir_builder(func, *args, **kwargs):
     package_dir = os.path.abspath(package_path())
 
     Singleton.initialize_dirs_to_exclude()
+    
     for i in inspect.stack()[2:]:
         fname, lineno = i.filename, i.lineno
         fname_abs = os.path.abspath(fname)
@@ -47,7 +56,26 @@ def ir_builder(func, *args, **kwargs):
             and not any(fname_abs.startswith(exclude_dir) \
                          for exclude_dir in Singleton.all_dirs_to_exclude):
             res.loc = f'{fname}:{lineno}'
+            if isinstance(res, Expr):
+                if res.is_valued() and i.code_context:
+                    line_of_code = i.code_context[0].strip()
+                    try:
+                        parsed_ast = ast.parse(line_of_code)
+                        
+                        if parsed_ast.body and isinstance(parsed_ast.body[0], ast.Assign):
+                            assign_node = parsed_ast.body[0]  
+                            print(ast.dump(assign_node, indent=2))
+                            if len(assign_node.targets) == 1 and isinstance(assign_node.targets[0], ast.Name):
+                                res.source_name_hint = assign_node.targets[0].id
+                    except SyntaxError:
+                        pass
+            if LAST_RES_LINENO != None and isinstance(LAST_RES, Expr):
+                if LAST_RES_LINENO != lineno and LAST_RES.source_name_hint != None:
+                    LAST_RES.source_name = LAST_RES.source_name_hint
+                    # print(f"LAST_RES line: {LAST_RES_LINENO}  target {LAST_RES.source_name }")
             break
+    LAST_RES = res 
+    LAST_RES_LINENO = lineno
     assert hasattr(res, 'loc')
     return res
 
@@ -146,6 +174,7 @@ class Singleton(type):
     with_py_loc: bool = False  # Whether to include Python location in string representation
     all_dirs_to_exclude: list = []  # Directories to exclude for stack inspection
 
+    
     @classmethod
     def initialize_dirs_to_exclude(mcs):
         '''Initialize the directories to exclude if not already initialized.'''

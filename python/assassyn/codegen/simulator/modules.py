@@ -77,13 +77,16 @@ class ElaborateModule(Visitor):
         id_and_exposure = None
         if node.is_valued():
             need_exposure = expr_externally_used(node, True)
+             
             id_expr = namify(node.as_operand())
             id_and_exposure = (id_expr, need_exposure)
+            
 
         # Handle different expression types
         open_scope = False
         code = []
-
+        code.append(f'  // {node}, {node.loc}')
+         
         if isinstance(node, BinaryOp):
             binop = BinaryOp.OPERATORS[node.opcode]
 
