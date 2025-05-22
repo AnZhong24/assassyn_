@@ -71,6 +71,16 @@ def dump_type(ty: DType) -> str:
         return f"Bits({ty.bits})"
     raise ValueError(f"Unknown type: {type(ty)}")
 
+def dump_type_cast(ty: DType) -> str:
+    """Dump a type to a string."""
+    if isinstance(ty, Int):
+        return "as_sint()"
+    elif isinstance(ty, UInt):
+        return "as_uint()"
+    elif isinstance(ty, Bits):
+        return "as_bits()"
+    raise ValueError(f"Unknown type: {type(ty)}")
+
 class CIRCTDumper(Visitor):
 
     wait_until: bool
@@ -95,7 +105,10 @@ class CIRCTDumper(Visitor):
         return " & ".join(self.cond_stack) + (" & {self.wait_until}" if self.wait_until is not None else "")
     
     def append_code(self, code: str):
-        self.code.append(self.indent * ' ' + code)
+        if code.strip() == '':
+            self.code.append('')
+        else:
+            self.code.append(self.indent * ' ' + code)
 
     def expose(self, kind: str, expr: Expr):
         ''' Expose an expression out of the module.'''
@@ -142,7 +155,7 @@ class CIRCTDumper(Visitor):
             if binop == BinaryOp.SHR:
                 op_str = ">>>" if dtype.is_signed() else ">>"
             b = dump_rval(expr.rhs, False)
-            body = f"{a} {op_str} {b}"
+            body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
             body = f'{dump_rval(expr, False)} = {body}'
         elif isinstance(expr, UnaryOp):
             uop = expr.opcode
@@ -166,7 +179,8 @@ class CIRCTDumper(Visitor):
             self.logs.append(f'print("{formatter}".format({args}))')
         elif isinstance(expr, ArrayRead):
             array_ref = expr.array
-            array_idx = dump_rval(expr.idx, False)
+            array_idx = unwrap_operand(expr.idx)
+            array_idx = dump_rval(array_idx, False) if not isinstance(array_idx, Const) else array_idx.value
             array_name = dump_rval(array_ref, False)
             rval = dump_rval(expr, False)
             body = f'{rval} = self.{array_name}_payload[{array_idx}]'
@@ -184,7 +198,7 @@ class CIRCTDumper(Visitor):
                 if intrinsic == PureIntrinsic.FIFO_PEEK:
                     body = f'{rval} = self.{fifo_name}_data'
                 elif intrinsic == PureIntrinsic.FIFO_VALID:
-                    body = f'{rval} = self.{fifo_name}_pop_valid'
+                    body = f'{rval} = self.{fifo_name}_valid'
             elif intrinsic == PureIntrinsic.VALUE_VALID:
                 value = expr.operands[0].value
                 value_expr = value
@@ -282,8 +296,8 @@ class CIRCTDumper(Visitor):
                 array = dump_rval(key, False)
                 has_write = False
                 ce = "Bits(1)(0)"
-                widx = "UInt(0)(0)"
-                wdata = "Bits(0)(0)"
+                widx = f"{dump_type(key.index_type())}(0)"
+                wdata = f"Bits({key.scalar_ty.bits})(0)"
                 for expr, pred in exposes:
                     if isinstance(expr, ArrayWrite):
                         has_write = True
@@ -292,14 +306,15 @@ class CIRCTDumper(Visitor):
                         idx = dump_rval(expr.idx, False)
                         data = dump_rval(expr.val, False)
                         widx = f"Mux({pred}, {widx}, {idx})"
-                        wdata = f"Mux({pred}, {wdata}, {data})"
+                        wdata = f"Mux({pred}, {wdata}, {data}.as_bits())"
                 if has_write:
                     self.append_code(f'self.{array}_ce = {ce}')
                     self.append_code(f'self.{array}_wdata = {wdata}')
-                    self.append_code(f'self.{array}_widx = {widx}')
+                    if key.index_bits > 0:
+                        self.append_code(f'self.{array}_widx = {widx}')
             elif isinstance(key, Port):
                 push_valid = "Bits(1)(0)"
-                push_data = "Bits(0)(0)"
+                push_data = f"{dump_type(key.dtype)}(0)"
                 fifo = dump_rval(key, False)
                 for expr, pred in exposes:
                     self.append_code(f'# {expr}')
@@ -314,8 +329,8 @@ class CIRCTDumper(Visitor):
                     self.append_code(f'# Expose: {expr}')
                 expr, pred = exposes[0]
                 rval = dump_rval(expr, False)
-                self.append_code(f'self.{dump_rval(expr, True)}_expose = {rval}')
-                self.append_code(f'self.{dump_rval(expr, True)}_valid = {pred}')
+                self.append_code(f'self.expose_{dump_rval(expr, True)} = {rval}')
+                self.append_code(f'self.valid_{dump_rval(expr, True)} = {pred}')
             elif isinstance(key, Module):
                 rval = dump_rval(key, False)
                 ce = "Bits(1)(0)"
@@ -335,25 +350,26 @@ class CIRCTDumper(Visitor):
                 for expr, pred in exposes:
                     if isinstance(expr, ArrayRead) and not read_dumped:
                         scalar_ty = dump_type(expr.dtype)
-                        self.append_code(f'{array}_payload: Input(Array({scalar_ty}, {key.size}))')
+                        self.append_code(f'{array}_payload = Input(Array({scalar_ty}, {key.size}))')
                         read_dumped = True
                     elif isinstance(expr, ArrayWrite) and not write_dumped:
-                        self.append_code(f'{array}_ce: Input(Bits(1))')
-                        self.append_code(f'{array}_wdata: Input({dump_type(expr.val.dtype)})')
-                        self.append_code(f'{array}_widx: Input({dump_type(key.index_type())})')
+                        self.append_code(f'{array}_ce = Output(Bits(1))')
+                        self.append_code(f'{array}_wdata = Output(Bits({expr.val.dtype.bits}))')
+                        if key.index_bits > 0:
+                            self.append_code(f'{array}_widx = Output({dump_type(key.index_type())})')
                         write_dumped = True
                     if read_dumped and write_dumped:
                         break
             elif isinstance(key, FIFOPush):
-                self.append_code(f'{key}_push_valid : Output(Bits(1))')
-                self.append_code(f'{key}_push_data : Output({dump_type(key.dtype)})')
+                self.append_code(f'{key}_push_valid = Output(Bits(1))')
+                self.append_code(f'{key}_push_data = Output({dump_type(key.dtype)})')
             elif isinstance(key, Expr):
                 rval = namify(dump_rval(key, True))
-                self.append_code(f'{rval}_expose: Output({dump_type(expr.dtype)})')
-                self.append_code(f'{rval}_valid: Output(Bits(1))')
+                self.append_code(f'expose_{rval} = Output({dump_type(expr.dtype)})')
+                self.append_code(f'valid_{rval} = Output(Bits(1))')
             elif isinstance(key, Module):
                 rval = dump_rval(key, False)
-                self.append_code(f'{rval}_trigger: Output(Bits(1))')
+                self.append_code(f'{rval}_trigger = Output(Bits(1))')
 
     def visit_module(self, node: Module):
         self.wait_until = None
@@ -362,15 +378,15 @@ class CIRCTDumper(Visitor):
         self.append_code(f'class {node.name}(Module):')
         if not isinstance(node, Downstream):
             self.indent += 4
-            self.append_code('clk: Clock()')
-            self.append_code('rst: Reset()')
-            self.append_code('executed: Output(Bits(1))')
+            self.append_code('clk = Clock()')
+            self.append_code('rst = Reset()')
+            self.append_code('executed = Output(Bits(1))')
             for i in node.ports:
                 dtype = dump_type(i.dtype)
                 name = namify(i.name)
-                self.append_code(f'{name} : Input({dtype})')
-                self.append_code(f'{name}_valid : Input(Bits(1))')
-                self.append_code(f'{name}_pop_ready : Output(Bits(1))')
+                self.append_code(f'{name} = Input({dtype})')
+                self.append_code(f'{name}_valid = Input(Bits(1))')
+                self.append_code(f'{name}_pop_ready = Output(Bits(1))')
             self.append_code('')
             self.append_code('@generator')
             self.append_code('def construct(self):')
@@ -382,6 +398,8 @@ class CIRCTDumper(Visitor):
         self.indent -= 4
         self.append_code('')
         self._exposes
+        self.append_code(f'system = System([{node.name}], name="{node.name}", output_directory="sv")')
+        self.append_code('system.compile()')
 
 header = '''from pycde import Input, Output, Module, System, Clock, Reset
 from pycde import generator, modparams

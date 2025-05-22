@@ -164,7 +164,12 @@ class BinaryOp(Expr):
         '''Get the data type of this operation'''
         # pylint: disable=import-outside-toplevel
         from ..dtype import Bits
-        if self.opcode in [BinaryOp.ADD, BinaryOp.SUB, BinaryOp.DIV, BinaryOp.MOD]:
+        if self.opcode in [BinaryOp.ADD]:
+            # TODO(@were): Make this bits + 1
+            bits = max(self.lhs.dtype.bits, self.rhs.dtype.bits)
+            tyclass = self.lhs.dtype.__class__
+            return tyclass(bits)
+        if self.opcode in [BinaryOp.SUB, BinaryOp.DIV, BinaryOp.MOD]:
             return type(self.lhs.dtype)(self.lhs.dtype.bits)
         if self.opcode in [BinaryOp.MUL]:
             bits = self.lhs.dtype.bits + self.rhs.dtype.bits
