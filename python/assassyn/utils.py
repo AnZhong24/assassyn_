@@ -84,9 +84,6 @@ def has_verilator():
 
 def create_and_clean_dir(dir_path: str):
     """Create a directory and clear its contents if it already exists."""
-    if os.path.exists(dir_path):
-        # Remove all contents of the directory
-        shutil.rmtree(dir_path)
     # Create the directory
     os.makedirs(dir_path, exist_ok=True)
 

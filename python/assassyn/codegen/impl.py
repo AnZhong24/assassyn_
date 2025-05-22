@@ -541,14 +541,6 @@ def codegen(sys: SysBuilder, **kwargs):
     '''
     # Create a CodeGen object but exclude simulator generation flag
     # We'll handle simulator generation separately using the Python implementation
-    cg = CodeGen(False,
-                 kwargs['verilog'],
-                 kwargs['idle_threshold'],
-                 kwargs['sim_threshold'],
-                 kwargs['random'],
-                 kwargs['resource_base'],
-                 kwargs['fifo_depth'])
-    cg.visit_system(sys)
 
     simulator_manifest = None
     # If simulator flag is set, use the Python implementation to generate it
@@ -556,9 +548,9 @@ def codegen(sys: SysBuilder, **kwargs):
         print('Start simulator in-python elaboration')
         simulator_manifest = simulator.elaborate(sys, **kwargs)
 
+    verilog_path = None
     if kwargs.get('verilog'):
         print('Start verilog elaboration')
         verilog_path = verilog.elaborate(sys, **kwargs)
 
-
-    return cg.get_source(), simulator_manifest
+    return simulator_manifest, verilog_path

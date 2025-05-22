@@ -1,8 +1,8 @@
 '''The programming interfaces involing assassyn backends'''
 
 import os
-import subprocess
 import tempfile
+from pathlib import Path
 
 from .builder import SysBuilder
 from . import utils
@@ -33,24 +33,6 @@ def config( # pylint: disable=too-many-arguments
         'random': random
     }
     return res.copy()
-
-def dump_cargo_toml(path, name):
-    '''
-    Dump the Cargo.toml file for the Rust-implemented simulator
-
-    Args:
-        path (Path): The path to the directory where the Cargo.toml file will be dumped
-        name (str): The name of the project
-    '''
-    toml = os.path.join(path, 'Cargo.toml')
-    with open(toml, 'w', encoding='utf-8') as f:
-        f.write('[package]\n')
-        f.write(f'name = "{name}"\n')
-        f.write('version = "0.0.0"\n')
-        f.write('edition = "2021"\n')
-        f.write('[dependencies]\n')
-        f.write(f'assassyn = {{ path = \"{utils.repo_path()}\" }}')
-    return toml
 
 def make_existing_dir(path):
     '''
@@ -91,29 +73,12 @@ def elaborate(# pylint: disable=too-many-locals
     if real_config['verbose']:
         print(sys)
 
-    path = real_config['path']
-    verilog = real_config['verilog']
+    proj_root = Path(real_config['path'])
 
-    sys_dir = os.path.join(path, sys.name)
+    sys_dir = proj_root / sys.name
 
     make_existing_dir(sys_dir)
 
-    # Dump the Cargo.toml file
-    toml = dump_cargo_toml(sys_dir, sys.name)
-    # Dump the src directory
-    make_existing_dir(os.path.join(sys_dir, 'src'))
-
-    simulator_manifest = None
-    # Dump the assassyn IR builder
-    with open(os.path.join(sys_dir, 'src/main.rs'), 'w', encoding='utf-8') as fd:
-        raw, simulator_manifest = codegen.codegen(sys, **real_config)
-        fd.write(raw)
-    if real_config['pretty_printer']:
-        subprocess.run(['cargo', 'fmt', '--manifest-path', toml], cwd=sys_dir, check=True)
-    subprocess.run(['cargo', 'run', '--release'], cwd=sys_dir, check=True)
-
-    verilog_path = None
-    if verilog:
-        verilog_path = os.path.join(sys_dir, f'{sys.name}_verilog')
+    simulator_manifest, verilog_path = codegen.codegen(sys, **real_config)
 
     return [simulator_manifest, verilog_path]

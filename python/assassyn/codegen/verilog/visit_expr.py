@@ -252,11 +252,11 @@ def visit_expr_impl(vd, expr: Expr) -> Optional[str]:
     elif isinstance(expr, Intrinsic):
         intrinsic = expr.opcode
         
-        if intrinsic == Opcode.FINISH:
+        if intrinsic == Intrinsic.FINISH:
             pred = vd.get_pred() or "1"
             body = f"\n`ifndef SYNTHESIS\n  always_ff @(posedge clk) if (executed && {pred}) $finish();\n`endif\n"
         
-        elif intrinsic == Opcode.ASSERT:
+        elif intrinsic == Intrinsic.ASSERT:
             pred = vd.get_pred() or "1"
             cond = dump_ref(vd.sys, expr.operands[0].value, False)
             body = f"  always_ff @(posedge clk) if (executed && {pred}) assert({cond});\n"

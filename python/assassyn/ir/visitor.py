@@ -15,6 +15,8 @@ class Visitor:
             self.visit_array(elem)
         for elem in node.modules:
             self.visit_module(elem)
+        for elem in node.downstreams:
+            self.visit_module(elem)
 
     def visit_array(self, node):
         '''Enter an array'''
