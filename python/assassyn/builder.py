@@ -17,22 +17,19 @@ if typing.TYPE_CHECKING:
     from .ir.value import Value
 
 from .namify import NamingManager 
-NAMING_MANAGER = NamingManager()
-LINE_EXPRESSION_TRACKER = {} 
-
 
 def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typing.Any]:
     """Process naming for an expression based on line context"""
     
-    global LINE_EXPRESSION_TRACKER
-    
+    LINE_EXPRESSION_TRACKER = Singleton.line_expression_tracker
+    NAMING_MANAGER = Singleton.naming_manager
     try:
         parsed_ast = ast.parse(line_of_code)
         
         if parsed_ast.body and isinstance(parsed_ast.body[0], ast.Assign):
             assign_node = parsed_ast.body[0]
              
-            print(ast.dump(assign_node, indent=2))  # DEBUG
+            # print(ast.dump(assign_node, indent=2))  
            
             if lineno not in LINE_EXPRESSION_TRACKER:
                 LINE_EXPRESSION_TRACKER[lineno] = {
@@ -76,9 +73,10 @@ def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typ
             return source_name 
         
     except Exception as e:
-        print(f"Error in process_naming: {e}")
-        import traceback
-        traceback.print_exc()
+        pass
+        # print(f"Error in process_naming: {e}")
+        # import traceback
+        # traceback.print_exc()
     
     return None
 
@@ -145,7 +143,9 @@ class SysBuilder:
     arrays: typing.List[Array]  # List of arrays
     _ctx_stack: dict  # Stack for context tracking
     _exposes: dict  # Dictionary of exposed nodes
-
+    line_expression_tracker: dict  # Dictionary of line expression tracker
+    naming_manager: NamingManager  # Naming manager
+    
     @property
     def current_module(self):
         '''Get the current module being built.'''
@@ -194,6 +194,8 @@ class SysBuilder:
         self.arrays = []
         self._ctx_stack = {'module': [], 'block': []}
         self._exposes = {}
+        self.line_expression_tracker = {}
+        self.naming_manager = NamingManager()
 
     def expose_on_top(self, node, kind=None):
         '''Expose the given node in the top function with the given kind.'''
@@ -208,12 +210,16 @@ class SysBuilder:
         '''Designate the scope of this system builder.'''
         assert Singleton.builder is None
         Singleton.builder = self
+        Singleton.line_expression_tracker = self.line_expression_tracker
+        Singleton.naming_manager = self.naming_manager
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         '''Leave the scope of this system builder.'''
         assert Singleton.builder is self
         Singleton.builder = None
+        Singleton.line_expression_tracker = None
+        Singleton.naming_manager = None
 
     def __repr__(self):
         body = '\n\n'.join(map(repr, self.modules))
