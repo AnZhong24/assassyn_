@@ -124,7 +124,7 @@ class Array:  #pylint: disable=too-many-instance-attributes
         return UInt(self.index_bits)
 
     @ir_builder
-    def __getitem__(self, index):
+    def __getitem__(self, index: typing.Union[int, Value]):
         # If not partitioned, return the value at the given index
         if self._partition is None:
             if isinstance(index, int):

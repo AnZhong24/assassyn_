@@ -141,7 +141,7 @@ class Value:
         from .expr import Select
         return Select(Select.SELECT, self, true_value, false_value)
 
-    def case(self, cases):
+    def case(self, cases: dict['Value', 'Value']):
         '''The frontend API to create a case operation'''
         assert None in cases, "Expecting a default case"
         res = cases[None]
