@@ -39,7 +39,11 @@ class UnifiedNamingStrategy:
                 target_name = f"record_{target.value.id}_{target.attr}"
             elif isinstance(target, ast.Subscript):
                 # a[0] = ... → array_a_0
-                target_name = f"array_{target.value.id}_{target.slice.value}"
+                # self._process_value(target.value, target.)
+                if isinstance(target.value, ast.Slice):
+                    target_name = f"array_{target.value.id}_{target.slice.value}"
+                else:
+                    target_name = f"array_{target.value.id}_{target.slice.id}"
             elif isinstance(target, ast.Tuple):
                 # Multiple targets - handled specially
                 target_name = None
@@ -139,8 +143,7 @@ class UnifiedNamingStrategy:
                     stop = obj.slice.upper.value if obj.slice.upper else 32
                     base_name = f"{obj.value.id}_bits_{start}to{stop}"
                     self.collected_names.append(base_name)
-                    # Add cast version
-                    self.collected_names.append(f"{base_name}_i32")
+                     
         elif isinstance(node, ast.Subscript):
             # Simple subscript like cnt[0] → array_cnt_0
             if isinstance(node.value, ast.Name):
