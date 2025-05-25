@@ -56,11 +56,10 @@ class UnifiedNamingStrategy:
         
         return self.collected_names
     
-    def _process_value(self, node: ast.AST, target_name: str, target: ast.AST) -> None:
+    def _process_value(self, node: ast.AST, target_name: str=None, target: ast.AST=None) -> None:
         """Recursively process the value expression"""
         
-        if isinstance(node, ast.BinOp):
-            # Binary operation - process recursively
+        if isinstance(node, ast.BinOp): 
             self._process_binop(node, target_name)
             
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -77,9 +76,10 @@ class UnifiedNamingStrategy:
                 
             elif method == 'select' or method == 'select1hot':
                 # Conditional select
-                self._process_method_object(node.func.value)
+                self._process_operand(node.func.value,target_name)
                 self._process_select(node, target_name)
             
+            #This is not worked yet.
             elif method == 'async_called':
                 print(f"async called: {node}")
                 # Handle async_called method calls
@@ -96,35 +96,12 @@ class UnifiedNamingStrategy:
                 self.collected_names.append(target_name)
                 
         else:
+            
             # Simple assignments - just use target name
             if target_name:
                 self.collected_names.append(target_name)
     
-
-    def _process_method_object(self, node: ast.AST) -> None:
-        """Process the object that a method is called on"""
-        if isinstance(node, ast.Subscript):
-            if isinstance(node.slice, ast.Slice):
-                # Handle cnt[0][0:0] pattern
-                if isinstance(node.value, ast.Subscript):
-                    # First process the inner subscript: cnt[0] → cnt_0
-                    if isinstance(node.value.value, ast.Name):
-                        self.collected_names.append(f"{node.value.value.id}_{node.value.slice.value}")
-                    # Then process the slice: cnt[0][0:0] → cnt_0_0
-                    start = node.slice.lower.value if node.slice.lower else 0
-                    self.collected_names.append(f"{node.value.value.id}_{node.value.slice.value}_{start}")
-                elif isinstance(node.value, ast.Name):
-                    # Simple slice: value[0:0] → value_0
-                    start = node.slice.lower.value if node.slice.lower else 0
-                    self.collected_names.append(f"{node.value.id}_{start}")
-            else:
-                # Simple subscript
-                if isinstance(node.value, ast.Name):
-                    self.collected_names.append(f"{node.value.id}_{node.slice.value}")
-        # elif isinstance(node, ast.Name):
-        #     # Simple name
-        #     self.collected_names.append(node.id)
-
+ 
     def _process_binop(self, node: ast.BinOp, base_name: str, is_root: bool = True) -> None:
         """Process binary operations recursively"""
         # Process left operand
@@ -168,10 +145,7 @@ class UnifiedNamingStrategy:
             # Simple subscript like cnt[0] → array_cnt_0
             if isinstance(node.value, ast.Name):
                 self.collected_names.append(f"array_{node.value.id}_{node.slice.value}")
-        # elif isinstance(node, ast.Name):
-        #     # Simple variable reference
-        #     self.collected_names.append(node.id)
-
+      
 
 
     def _process_operand(self, node: ast.AST, base_name: str) -> None:
@@ -181,21 +155,14 @@ class UnifiedNamingStrategy:
             # Nested BinOp
             self._process_binop(node, base_name, is_root=False)
             
-        elif isinstance(node, ast.Attribute):
-            # Attribute access: a.payload
+        elif isinstance(node, ast.Attribute): 
             if isinstance(node.value, ast.Name):
                 attr_name = f"{node.value.id}_{node.attr}"
                 self.collected_names.append(attr_name)
-                
-                # # Some attributes need casting
-                # if node.attr in ['payload', 'data']:
-                #     self.collected_names.append(f"{attr_name}_i32")
-                    
-            elif isinstance(node.value, ast.Subscript):
-                # bundle[0].payload pattern
+                 
+            elif isinstance(node.value, ast.Subscript): 
                 self.collected_names.append("value")
-                if node.attr in ['payload', 'data']:
-                    self.collected_names.append("value_i32")
+                
                     
         elif isinstance(node, ast.Subscript):
             # Handle both slice and simple subscript
@@ -209,9 +176,7 @@ class UnifiedNamingStrategy:
                 # Simple subscript: cnt[0] → array_cnt_0
                 if isinstance(node.value, ast.Name):
                     self.collected_names.append(f"array_{node.value.id}_{node.slice.value}")
-        
-        # Other nodes (Name, Constant, Call) don't generate intermediate names
-    
+         
     def _process_pop_all_ports(self, target: ast.Tuple) -> None:
         """Process pop_all_ports tuple unpacking""" 
         
@@ -295,9 +260,6 @@ class NamingManager:
         self.line_contexts[lineno].append(context)
          
         names = self.strategy.generate_names(context)
-        
-        # Debug output
-        # print(f"Line {lineno}: Generated {len(names)} names: {names}")
-        
+         
         return names
    
