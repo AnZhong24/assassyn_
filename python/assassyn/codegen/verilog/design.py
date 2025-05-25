@@ -29,7 +29,6 @@ from ...ir.expr import (
     Intrinsic
 )
 
-
 def dump_rval(node, with_namespace: bool) -> str:
     """Dump a reference to a node with options."""
 
@@ -405,13 +404,44 @@ header = '''from pycde import Input, Output, Module, System, Clock, Reset
 from pycde import generator, modparams
 from pycde.constructs import Reg, Array, Mux
 from pycde.types import Bits, SInt, UInt\n
+
+@modparams
+def FIFO(WIDTH: int, DEPTH_LOG2: int):
+    class FIFOImpl(Module):
+        module_name = f"fifo"
+        # Define inputs
+        clk = Clock()
+        rst_n = Input(Bits(1))
+        push_valid = Input(Bits(1))
+        push_data = Input(Bits(WIDTH))
+        pop_ready = Input(Bits(1))
+        # Define outputs
+        push_ready = Output(Bits(1))
+        pop_valid = Output(Bits(1))
+        pop_data = Output(Bits(WIDTH))
+    return FIFOImpl
+
+@modparams
+def TriggerCounter(WIDTH: int):
+    class TriggerCounterImpl(Module):
+        module_name = f"trigger_counter"
+        clk = Clock()
+        rst_n = Input(Bits(1))
+        trigger = Input(Bits(1))
+        count = Output(Bits(WIDTH))
+    return TriggerCounterImpl
+
 '''
 
 def generate_design(fname: str, sys: SysBuilder):
     with open(fname, 'w', encoding='utf-8') as fd:
+        # Generate the header
         fd.write(header)
+        # Generate the module implementations
         dumper = CIRCTDumper(fd)
         dumper.visit_system(sys)
         code = '\n'.join(dumper.code)
         fd.write(code)
+        # Generate the top function
+
     return dumper.logs
