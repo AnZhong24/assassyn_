@@ -42,7 +42,8 @@ class Operand:
 
 class Expr(Value):
     '''The frontend base node for expressions'''
-
+    
+    source_name: str
     opcode: int  # Operation code for this expression
     loc: str  # Source location information
     parent: typing.Optional[Block]  # Parent block of this expression
@@ -57,7 +58,10 @@ class Expr(Value):
         from ..array import Array
         from ..module import Port
         self.opcode = opcode
+<<<<<<< HEAD
         self.loc = self.parent = None
+        self.source_name_hint = None
+        self.source_name = None
         # NOTE: We only wrap values in Operand, not Ports or Arrays
         self._operands = []
         for i in operands:
@@ -81,11 +85,18 @@ class Expr(Value):
         return self._operands
 
     def as_operand(self):
+<<<<<<< HEAD
         '''Dump the expression as an operand'''
+        # if self.source_name_hint is not None:   
+        #     return self.source_name_hint
+        # else:
+        #     return f'_{identifierize(self)}'
         if self.source_name is not None:
-            return f'{self.source_name}' 
+            return f'{self.source_name}'
+        elif self.source_name_hint is not None:  
+            return f'{self.source_name_hint}_{identifierize(self)}'
         else:
-            return f'_{namify(identifierize(self))}'
+            return f'_{identifierize(self)}'
 
     def is_binary(self):
         '''If the opcode is a binary operator'''

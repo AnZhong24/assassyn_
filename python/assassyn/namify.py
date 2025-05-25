@@ -11,6 +11,7 @@ class NamingContext:
     target_names: typing.List[str]
     lineno: int
 
+
 class UnifiedNamingStrategy:
     """Single unified recursive strategy for all naming patterns"""
     
@@ -42,6 +43,9 @@ class UnifiedNamingStrategy:
             elif isinstance(target, ast.Tuple):
                 # Multiple targets - handled specially
                 target_name = None
+            elif isinstance(target, ast.Subscript): 
+                if isinstance(target.value, ast.Name):
+                    target_name = f"array_{target.value.id}_{target.slice.value}"
             else:
                 target_name = "result"
          
@@ -64,8 +68,12 @@ class UnifiedNamingStrategy:
             method = node.func.attr
             
             if method == 'pop_all_ports':
-                # Special handling for tuple unpacking
-                self._process_pop_all_ports(target)
+                if isinstance(target, ast.Name):
+                    pop_name = target.id
+                    self.collected_names.append(f"{pop_name}_valid")
+                    self.collected_names.extend(pop_name) 
+                else:
+                    self._process_pop_all_ports(target)
                 
             elif method == 'select' or method == 'select1hot':
                 # Conditional select
@@ -205,7 +213,8 @@ class UnifiedNamingStrategy:
         # Other nodes (Name, Constant, Call) don't generate intermediate names
     
     def _process_pop_all_ports(self, target: ast.Tuple) -> None:
-        """Process pop_all_ports tuple unpacking"""
+        """Process pop_all_ports tuple unpacking""" 
+        
         target_names = [elt.id for elt in target.elts if isinstance(elt, ast.Name)]
         n = 0
         

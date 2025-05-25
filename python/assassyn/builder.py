@@ -58,8 +58,7 @@ def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typ
             if not line_data['names_generated'] :
                 generated_names = NAMING_MANAGER.generate_source_names(
                     lineno, assign_node
-                )
-                print(f"generated_names: {generated_names} in {lineno}")
+                ) 
                 line_data['generated_names'] = generated_names
                 line_data['names_generated'] = True
                
