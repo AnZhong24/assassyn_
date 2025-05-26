@@ -58,7 +58,7 @@ class Expr(Value):
         from ..array import Array
         from ..module import Port
         self.opcode = opcode
-<<<<<<< HEAD
+        
         self.loc = self.parent = None
         self.source_name_hint = None
         self.source_name = None
@@ -85,18 +85,11 @@ class Expr(Value):
         return self._operands
 
     def as_operand(self):
-<<<<<<< HEAD
-        '''Dump the expression as an operand'''
-        # if self.source_name_hint is not None:   
-        #     return self.source_name_hint
-        # else:
-        #     return f'_{identifierize(self)}'
+        '''Dump the expression as an operand''' 
         if self.source_name is not None:
-            return f'{self.source_name}'
-        elif self.source_name_hint is not None:  
-            return f'{self.source_name_hint}_{identifierize(self)}'
+            return f'{self.source_name}' 
         else:
-            return f'_{identifierize(self)}'
+            return f'_{namify(identifierize(self))}'
 
     def is_binary(self):
         '''If the opcode is a binary operator'''
