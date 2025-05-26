@@ -12,7 +12,7 @@ from ...utils import create_and_clean_dir
 
 def elaborate(sys: SysBuilder, **kwargs) -> str:
     """Elaborate the system into Verilog.
-    
+
     Args:
         sys: The system to elaborate
         **kwargs: Configuration options including:

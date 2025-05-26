@@ -88,6 +88,8 @@ class CIRCTDumper(Visitor):
     cond_stack: List[str]
     _exposes: Dict[Expr, List[Tuple[Expr, str]]]
     logs: List[str]
+    connections: List[Tuple[Module, str, str]]
+    current_module: Module
 
     def __init__(self, fd) -> None:
         super().__init__()
@@ -97,6 +99,8 @@ class CIRCTDumper(Visitor):
         self._exposes = {}
         self.cond_stack = []
         self.logs = []
+        self.connections = []
+        self.current_module = None
 
     def get_pred(self) -> str:
         if not self.cond_stack:
@@ -108,6 +112,11 @@ class CIRCTDumper(Visitor):
             self.code.append('')
         else:
             self.code.append(self.indent * ' ' + code)
+    
+    def append_port(self, name: str, kind: str, dtype: str, connect: str):
+        self.append_code(f'{name} = {kind}({dtype})')
+        if kind == 'Input':
+            self.connections.append((self.current_module, name, connect))
 
     def expose(self, kind: str, expr: Expr):
         ''' Expose an expression out of the module.'''

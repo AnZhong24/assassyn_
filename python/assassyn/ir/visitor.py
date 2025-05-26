@@ -14,7 +14,9 @@ class Visitor:
         for elem in node.arrays:
             self.visit_array(elem)
         for elem in node.modules:
+            self.current_module = elem
             self.visit_module(elem)
+        self.current_module = None
         for elem in node.downstreams:
             self.visit_module(elem)
 
