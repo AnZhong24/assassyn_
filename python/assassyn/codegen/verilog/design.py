@@ -91,6 +91,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     logs: List[str]
     connections: List[Tuple[Module, str, str]]
     current_module: Module
+    sys: SysBuilder
+    async_callees: Dict[Module, List[Module]]
 
     def __init__(self):
         super().__init__()
@@ -102,13 +104,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.logs = []
         self.connections = []
         self.current_module = None
+        self.sys = None
+        self.async_callees = {}
+        self.exposed_ports_to_add = []
 
     def get_pred(self) -> str:
         """Get the current predicate for conditional execution."""
         if not self.cond_stack:
-            return "Bits(1)(1)" if self.wait_until is None else self.wait_until
-        return (" & ".join(self.cond_stack) +
-                (" & {self.wait_until}" if self.wait_until is not None else ""))
+            return "Bits(1)(1)"
+        return " & ".join(self.cond_stack)
 
     def append_code(self, code: str):
         """Append code with proper indentation."""
@@ -117,25 +121,21 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         else:
             self.code.append(self.indent * ' ' + code)
 
-    def append_port(self, name: str, kind: str, dtype: str, connect: str):
-        """Append a port definition with connection."""
-        self.append_code(f'{name} = {kind}({dtype})')
-        if kind == 'Input':
-            self.connections.append((self.current_module, name, connect))
-
     def expose(self, kind: str, expr: Expr):
         ''' Expose an expression out of the module.'''
-        ret = False  # pylint: disable=unused-variable
         key = None
         if kind == 'expr':
             key = expr
-        elif kind == 'array':  # pylint: disable=possibly-used-before-assignment
+        elif kind == 'array':
             assert isinstance(expr, (ArrayRead, ArrayWrite))
             key = expr.array
-        if kind == 'fifo':
+        elif kind == 'fifo':
             assert isinstance(expr, FIFOPush)
             key = expr.fifo
-        if kind == 'trigger':
+        elif kind == 'fifo_pop':
+            assert isinstance(expr, FIFOPop)
+            key = expr.fifo
+        elif kind == 'trigger':
             assert isinstance(expr, AsyncCall)
             key = expr.bind.callee
         assert key is not None
@@ -158,7 +158,6 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.cond_stack.pop()
 
     def visit_expr(self, expr: Expr):  # pylint: disable=arguments-renamed,too-many-locals,too-many-branches,too-many-statements
-        # Handle different expression types
         self.append_code(f'# {expr}')
         body = None
         rval = dump_rval(expr, False)
@@ -177,18 +176,17 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             op_str = "~" if uop == UnaryOp.FLIP else "-"
             x = dump_rval(expr.x, False)
             body = f"{op_str}{x}"
-            body = f'self.{dump_rval(expr, with_namespace=False)} = {body}'
+            body = f'{rval} = {body}'
         elif isinstance(expr, FIFOPop):
-            fifo = dump_rval(expr.fifo, False)
-            dtype = dump_type(expr.fifo.dtype)
-            body = f'self.{fifo}_pop_ready = {self.get_pred()}'
+            self.expose('fifo_pop', expr)
+            body = None
         elif isinstance(expr, Log):
             formatter = expr.operands[0]
             args = []
             for i in expr.operands[1:]:
                 self.expose('expr', unwrap_operand(i))
-                rval = dump_rval(unwrap_operand(i), True)
-                args.append(f'dut.{rval}.value')
+                rval_arg = dump_rval(unwrap_operand(i), True)
+                args.append(f'dut.{rval_arg}.value')
             args = ", ".join(args)
             self.logs.append(f'# {expr}')
             self.logs.append(f'print("{formatter}".format({args}))')
@@ -198,7 +196,6 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             array_idx = (dump_rval(array_idx, False)
                          if not isinstance(array_idx, Const) else array_idx.value)
             array_name = dump_rval(array_ref, False)
-            rval = dump_rval(expr, False)
             body = f'{rval} = self.{array_name}_payload[{array_idx}]'
             self.expose('array', expr)
         elif isinstance(expr, ArrayWrite):
@@ -206,7 +203,6 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, FIFOPush):
             self.expose('fifo', expr)
         elif isinstance(expr, PureIntrinsic):
-            rval = dump_rval(expr, False)
             intrinsic = expr.opcode
             if intrinsic in [PureIntrinsic.FIFO_VALID, PureIntrinsic.FIFO_PEEK]:
                 fifo = expr.args[0]
@@ -216,15 +212,12 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 elif intrinsic == PureIntrinsic.FIFO_VALID:
                     body = f'{rval} = self.{fifo_name}_valid'
             elif intrinsic == PureIntrinsic.VALUE_VALID:
-                value = expr.operands[0].value
-                value_expr = value
-                if value_expr.parent.module != expr.parent.module:
-                    body = f"{rval} = self.{namify(str(value_expr).as_operand())}_valid"  # pylint: disable=no-member
-                else:
-                    pred = self.get_pred()
-                    body = f"{rval} = (executed & {pred})"
+                 value_expr = expr.operands[0].value
+                 if value_expr.parent.module != expr.parent.module:
+                     body = f"{rval} = self.{namify(str(value_expr).as_operand())}_valid"
+                 else:
+                     body = f"{rval} = self.executed"
             else:
-                # TODO(@were): Handle other intrinsics
                 raise ValueError(f"Unknown intrinsic: {expr}")
         elif isinstance(expr, AsyncCall):
             self.expose('trigger', expr)
@@ -232,199 +225,528 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             a = dump_rval(expr.x, False)
             l = expr.l.value.value
             r = expr.r.value.value
-            body = f"{a}[{r}:{l}]"
+            body = f"{rval} = {a}[{r}:{l}]"
         elif isinstance(expr, Concat):
             a = dump_rval(expr.msb, False)
             b = dump_rval(expr.lsb, False)
-            body = f"{{{a}, {b}}}"
+            body = f"{rval} = {{{a}, {b}}}"
         elif isinstance(expr, Cast):
             dbits = expr.dtype.bits
             a = dump_rval(expr.x, False)
-            src_dtype = expr.src_type
+            src_dtype = expr.src_type()
             pad = dbits - src_dtype.bits
+            cast_body = ""
             if expr.cast_kind == Cast.BITCAST:
                 assert pad == 0
-                if isinstance(expr.dtype, Int):
-                    body = f"{a}.as_sint()"
-                elif isinstance(expr.dtype, UInt):
-                    body = f"{a}.as_uint()"
-                elif isinstance(expr.dtype, Bits):
-                    body = f"{a}.as_bits()"
-                else:
-                    raise ValueError(f"Unknown cast type: {expr.dtype}")
+                cast_body = f"{a}.{dump_type_cast(expr.dtype)}"
             elif expr.cast_kind == Cast.ZEXT:
-                body = f"{{{pad}'b0, {a}}}"
+                cast_body = f"{{{pad}'b0, {a}}}"
             elif expr.cast_kind == Cast.SEXT:
-                dest_dtype = expr.dtype
-                if (src_dtype.is_int() and src_dtype.is_signed and
-                    dest_dtype.is_int() and dest_dtype.is_signed and
-                    dest_dtype.bits > src_dtype.bits):
-                    # perform sext
-                    body = f"{{{pad}'{{{a}[{src_dtype.bits - 1}]}}, {a}}}"
-                else:
-                    body = f"{{{pad}'b0, {a}}}"
+                cast_body = f"{{{pad}'{{{a}[{src_dtype.bits - 1}]}}, {a}}}"
+            body = f"{rval} = {cast_body}"
         elif isinstance(expr, Select):
-            cond = dump_rval(expr.cond, True)
-            true_value = dump_rval(expr.true_value, True)
-            false_value = dump_rval(expr.false_value, True)
-            body = f'Mux({cond}, {false_value}, {true_value})'
+            cond = dump_rval(expr.cond, False)
+            true_value = dump_rval(expr.true_value, False)
+            false_value = dump_rval(expr.false_value, False)
+            body = f'{rval} = Mux({cond}, {true_value}, {false_value})'
         elif isinstance(expr, Bind):
-            # handled in AsyncCall
             body = None
         elif isinstance(expr, Select1Hot):
-            dbits = expr.dtype.bits
+             # This implementation is simplified and may need adjustment for complex cases
             cond = dump_rval(expr.cond, False)
-            terms = []
-            mask = "1" * expr.dtype.bits  # pylint: disable=unused-variable
-            mask = "Bits({expr.dtype.bits})({mask})"
-            dtype = f"Bits({expr.dtype.bits})"
-            for i, elem in enumerate(expr.values):
-                value = dump_rval(elem, False)
-                terms.append("(Mux({cond}[i:i], {dtype}(0), {mask}) & {value})")
-            body = " | ".join(terms)
+            values = [dump_rval(v, False) for v in expr.values]
+            body = f"{rval} = Mux1H({cond}, [{', '.join(values)}])"
         elif isinstance(expr, Intrinsic):
             intrinsic = expr.opcode
             if intrinsic == Intrinsic.FINISH:
                 pred = self.get_pred() or "1"
                 body = (f"\n`ifndef SYNTHESIS\n  always_ff @(posedge clk) "
-                        f"if (executed && {pred}) $finish();\n`endif\n")
+                        f"if (self.executed && {pred}) $finish();\n`endif\n")
             elif intrinsic == Intrinsic.ASSERT:
                 self.expose('expr', expr.args[0])
             elif intrinsic == Intrinsic.WAIT_UNTIL:
                 cond = dump_rval(expr.args[0], False)
-                self.append_code(f'self.executed = {cond}')
-                self.wait_until = "(" + cond + ")"
+                is_async_callee = self.current_module in self.async_callees
+                
+                final_cond = cond
+                if is_async_callee:
+                    final_cond = f"({cond} & self.trigger_counter_pop_valid)"
+                 
+                self.wait_until = final_cond
             else:
                 raise ValueError(f"Unknown block intrinsic: {expr}")
         else:
             raise ValueError(f"Unhandled expression type: {type(expr).__name__}")
 
-        # Handle expressions that are externally used
         if expr.is_valued() and expr_externally_used(expr, True):
             self.expose('expr', expr)
 
         if body is not None:
             self.append_code(body)
-
-    def cleanup_post_generation(self):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-        """Clean up and finalize code generation."""
+    
+    def cleanup_post_generation(self):
         self.append_code('')
+
+        is_driver = self.current_module.name.startswith('Driver')
+        if is_driver:
+            self.append_code('executed_wire = self.trigger_counter_pop_valid')
+        elif self.current_module in self.async_callees:
+            # For the Adder, the execution condition is already stored in self.wait_until
+            self.append_code(f'executed_wire = {self.wait_until}')
+        else:
+            # Fallback for any other module type
+            self.append_code('executed_wire = Bits(1)(1)')
+ 
         for key, exposes in self._exposes.items():
             if isinstance(key, Array):
                 array = dump_rval(key, False)
-                has_write = False
-                ce = "Bits(1)(0)"
-                widx = f"{dump_type(key.index_type())}(0)"
-                wdata = f"Bits({key.scalar_ty.bits})(0)"
+                has_write = any(isinstance(e, ArrayWrite) for e, p in exposes)
+                if not has_write: continue
+                 
+                ce_terms = []
+                widx_terms = [f"{dump_type(key.index_type())}(0)"]
+                wdata_terms = [f"Bits({key.scalar_ty.bits})(0)"]
+                
                 for expr, pred in exposes:
                     if isinstance(expr, ArrayWrite):
-                        has_write = True
                         self.append_code(f'# Expose: {expr}')
-                        ce = ce + " | " + pred
+                        ce_terms.append(pred)
                         idx = dump_rval(expr.idx, False)
                         data = dump_rval(expr.val, False)
-                        widx = f"Mux({pred}, {widx}, {idx})"
-                        wdata = f"Mux({pred}, {wdata}, {data}.as_bits())"
-                if has_write:
-                    self.append_code(f'self.{array}_ce = {ce}')
-                    self.append_code(f'self.{array}_wdata = {wdata}')
-                    if key.index_bits > 0:
-                        self.append_code(f'self.{array}_widx = {widx}')
-            elif isinstance(key, Port):
-                push_valid = "Bits(1)(0)"
-                push_data = f"{dump_type(key.dtype)}(0)"
-                fifo = dump_rval(key, False)
+                     
+                        widx_terms.insert(0, f"Mux({pred}, {widx_terms[0]}, {idx})")
+                        wdata_terms.insert(0, f"Mux({pred}, {wdata_terms[0]}, {data}.as_bits())")
+
+                final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
+                # Use executed_wire
+                self.append_code(f'self.{array}_ce = executed_wire & ({final_ce})')
+                self.append_code(f'self.{array}_wdata = {wdata_terms[0]}')
+                if key.index_bits > 0:
+                    self.append_code(f'self.{array}_widx = {widx_terms[0]}')
+
+            if isinstance(key, Port):
+                # Check what kind of operations were exposed for this port
+                has_push = any(isinstance(e, FIFOPush) for e, p in exposes)
+                has_pop = any(isinstance(e, FIFOPop) for e, p in exposes)
+
+                if has_push:
+                    # This is the existing, correct logic for FIFOPush
+                    fifo = dump_rval(key, False)
+                    push_valid_terms = [p for e, p in exposes if isinstance(e, FIFOPush)]
+                    push_exprs = [e for e, p in exposes if isinstance(e, FIFOPush)]
+                    
+                    if len(push_exprs) == 1:
+                        final_push_data = dump_rval(push_exprs[0].val, False)
+                    else:
+                        push_data_terms_mux = [f"{dump_type(key.dtype)}(0)"]
+                        for expr, pred in exposes:
+                            if not isinstance(expr, FIFOPush): continue
+                            rval = dump_rval(expr.val, False)
+                            push_data_terms_mux.insert(0, f"Mux({pred}, {push_data_terms_mux[0]}, {rval})")
+                        final_push_data = push_data_terms_mux[0]
+                    ready_signal = f"self.fifo_{namify(key.module.name)}_{fifo}_push_ready"
+                   
+                    final_push_valid = " | ".join(push_valid_terms) if push_valid_terms else "Bits(1)(0)"
+
+                    self.append_code(f'# {push_exprs[0]}')
+                    self.append_code(f'self.{fifo}_push_valid = executed_wire & ({final_push_valid}) & {ready_signal}')
+                    self.append_code(f'self.{fifo}_push_data = {final_push_data}')
+
+                if has_pop: 
+                    fifo = dump_rval(key, False)
+                    pop_expr = [e for e, p in exposes if isinstance(e, FIFOPop)][0]
+                    self.append_code(f'# {pop_expr}')
+                    self.append_code(f'self.{fifo}_pop_ready = executed_wire')
+                    
+            elif isinstance(key, Module): # This is for AsyncCall triggers
+                rval = dump_rval(key, False)
+                ce_terms = []
                 for expr, pred in exposes:
                     self.append_code(f'# {expr}')
-                    assert isinstance(expr, FIFOPush)
-                    rval = dump_rval(expr.val, False)
-                    push_valid = push_valid + " | " + pred
-                    push_data = f"Mux({pred}, {push_data}, {rval})"
-                self.append_code(f'self.{fifo}_push_valid = {push_valid}')
-                self.append_code(f'self.{fifo}_push_data = {push_data}')
+                    ce_terms.append(pred)
+                
+                final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
+                self.append_code(f'self.{rval}_trigger = executed_wire & ({final_ce}) & self.{rval}_trigger_counter_delta_ready')
+
             elif isinstance(key, Expr):
-                for expr, _ in exposes:
-                    self.append_code(f'# Expose: {expr}')
                 expr, pred = exposes[0]
                 rval = dump_rval(expr, False)
-                self.append_code(f'self.expose_{dump_rval(expr, True)} = {rval}')
-                self.append_code(f'self.valid_{dump_rval(expr, True)} = {pred}')
-            elif isinstance(key, Module):
-                rval = dump_rval(key, False)
-                ce = "Bits(1)(0)"
-                for expr, pred in exposes:
-                    self.append_code(f'# {expr}')
-                    ce = ce + " | " + pred
-                self.append_code(f'self.{rval}_trigger = {ce}')
-        if self.wait_until is None:
-            self.append_code('self.executed = Bits(1)(1)')  # pylint: disable=f-string-without-interpolation
+                exposed_name = dump_rval(expr, True)
+                dtype_str = dump_type(expr.dtype)
 
-        self.indent -= 4
-        self.append_code('')
-        for key, exposes in self._exposes.items():
-            if isinstance(key, Array):
-                array = dump_rval(key, False)
-                read_dumped = write_dumped = False
-                for expr, pred in exposes:
-                    if isinstance(expr, ArrayRead) and not read_dumped:
-                        scalar_ty = dump_type(expr.dtype)
-                        self.append_code(f'{array}_payload = Input(Array({scalar_ty}, {key.size}))')
-                        read_dumped = True
-                    elif isinstance(expr, ArrayWrite) and not write_dumped:
-                        self.append_code(f'{array}_ce = Output(Bits(1))')
-                        self.append_code(f'{array}_wdata = Output(Bits({expr.val.dtype.bits}))')
-                        if key.index_bits > 0:
-                            self.append_code(
-                                f'{array}_widx = Output({dump_type(key.index_type())})')
-                        write_dumped = True
-                    if read_dumped and write_dumped:
-                        break
-            elif isinstance(key, FIFOPush):
-                self.append_code(f'{key}_push_valid = Output(Bits(1))')
-                self.append_code(f'{key}_push_data = Output({dump_type(key.dtype)})')
-            elif isinstance(key, Expr):
-                rval = namify(dump_rval(key, True))
-                self.append_code(f'expose_{rval} = Output({dump_type(expr.dtype)})')
-                self.append_code(f'valid_{rval} = Output(Bits(1))')
-            elif isinstance(key, Module):
-                rval = dump_rval(key, False)
-                self.append_code(f'{rval}_trigger = Output(Bits(1))')
+                # Add port declaration strings to our list
+                self.exposed_ports_to_add.append(f'expose_{exposed_name} = Output({dtype_str})')
+                self.exposed_ports_to_add.append(f'valid_{exposed_name} = Output(Bits(1))')
 
+                # Generate the logic assignment
+                self.append_code(f'# Expose: {expr}')
+                self.append_code(f'self.expose_{exposed_name} = {rval}')
+                self.append_code(f'self.valid_{exposed_name} = executed_wire')
+
+        self.append_code('self.executed = executed_wire')
+         
     def visit_module(self, node: Module):
         self.wait_until = None
         self._exposes = {}
         self.cond_stack = []
-        self.append_code(f'class {node.name}(Module):')
-        if not isinstance(node, Downstream):
-            self.indent += 4
-            self.append_code('clk = Clock()')
-            self.append_code('rst = Reset()')
-            self.append_code('executed = Output(Bits(1))')
-            for i in node.ports:
-                dtype = dump_type(i.dtype)
-                name = namify(i.name)
-                self.append_code(f'{name} = Input({dtype})')
-                self.append_code(f'{name}_valid = Input(Bits(1))')
-                self.append_code(f'{name}_pop_ready = Output(Bits(1))')
-            self.append_code('')
-            self.append_code('@generator')
-            self.append_code('def construct(self):')
-            self.indent += 4
-            self.visit_block(node.body)
-            self.cleanup_post_generation()
-        else:
-            assert False, "TODO"
+        self.current_module = node
+        self.exposed_ports_to_add = []
+        
+        is_async_callee = node in self.async_callees
+        is_driver = node.name == 'Driver'
+        
+        self.append_code(f'class {namify(node.name)}(Module):')
+        self.indent += 4
+        self.append_code('clk = Clock()')
+        self.append_code('rst = Reset()')
+        self.append_code('executed = Output(Bits(1))')
+        
+        # Add standard ports
+        for i in node.ports:
+            name = namify(i.name)
+            self.append_code(f'{name} = Input({dump_type(i.dtype)})')
+            self.append_code(f'{name}_valid = Input(Bits(1))')
+            self.append_code(f'{name}_pop_ready = Output(Bits(1))')
+        
+        # Add handshake ports based on analysis
+        if is_async_callee:
+            self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
+
+        if node.name.startswith('Driver'):
+            self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
+            # Find what it calls to add necessary ports
+            for callee in self.sys.modules:
+                if callee == node: continue
+                for port in callee.ports: 
+                    # The port name must include the callee's name and the port's name.
+                    port_name = f'fifo_{namify(callee.name)}_{namify(port.name)}_push_ready'
+                    self.append_code(f'{port_name} = Input(Bits(1))')
+                self.append_code(f'{namify(callee.name)}_trigger_counter_delta_ready = Input(Bits(1))')
+        # ...
+        # Add array ports
+        for arr in self.sys.arrays:
+            # CHECK: Only add array ports if the current module uses the array
+            if node in self.array_users.get(arr, []):
+                self.append_code(f'{namify(arr.name)}_payload = Input(Array({dump_type(arr.scalar_ty)}, {arr.size}))')
+                self.append_code(f'{namify(arr.name)}_ce = Output(Bits(1))')
+                self.append_code(f'{namify(arr.name)}_wdata = Output(Bits({arr.scalar_ty.bits}))')
+                if arr.index_bits > 0:
+                    self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(arr.index_type())})')
+        
+        # Add fifo/trigger output ports
+        if is_driver:
+            for callee in self.sys.modules:
+                if callee == node: continue
+                for port in callee.ports:
+                    self.append_code(f'{namify(port.name)}_push_valid = Output(Bits(1))')
+                    self.append_code(f'{namify(port.name)}_push_data = Output({dump_type(port.dtype)})')
+                self.append_code(f'{namify(callee.name)}_trigger = Output(Bits(1))')
+        
+        # Add exposed value ports
+        # A more robust solution would pre-analyze these
+        
+        self.append_code('')
+        self.append_code('@generator')
+        self.append_code('def construct(self):')
+        self.indent += 4
+        self.visit_block(node.body)
+        self.cleanup_post_generation()
         self.indent -= 4
         self.append_code('')
-        self._exposes  # pylint: disable=pointless-statement
-        self.append_code(
-            f'system = System([{node.name}], name="{node.name}", output_directory="sv")')
+        
+        # Write the collected Output port declarations here
+        for port_code in self.exposed_ports_to_add:
+            self.append_code(port_code)
+
+        self.indent -= 4
+        self.append_code('')
+        
+    def _walk_expressions(self, block: Block):
+        """Recursively walks a block and yields all expressions."""
+        for item in block.body:
+            if isinstance(item, Expr):
+                yield item
+            elif isinstance(item, Block):
+                yield from self._walk_expressions(item)
+
+    def visit_system(self, sys: SysBuilder):
+        self.sys = sys
+        # Analysis pass
+        for module in sys.modules:
+            # Use the new helper method to walk the IR
+            for expr in self._walk_expressions(module.body):
+                if isinstance(expr, AsyncCall):
+                    callee = expr.bind.callee
+                    if callee not in self.async_callees:
+                        self.async_callees[callee] = []
+                    self.async_callees[callee].append(module)
+
+        self.array_users = {}
+        for arr in self.sys.arrays:
+            self.array_users[arr] = []
+            for mod in self.sys.modules:
+                for expr in self._walk_expressions(mod.body):
+                    if isinstance(expr, (ArrayRead, ArrayWrite)) and expr.array == arr:
+                        if mod not in self.array_users[arr]:
+                            self.array_users[arr].append(mod)
+
+        for elem in sys.arrays:
+            self.visit_array(elem)
+        for elem in sys.modules:
+            self.current_module = elem
+            self.visit_module(elem)
+        self.current_module = None
+        for elem in sys.downstreams:
+            self.visit_module(elem)
+ 
+        self._generate_top_harness()
+
+
+    # def _generate_top_harness(self):
+        
+    #     driver_mod = [m for m in self.sys.modules if m.name.startswith('Driver')][0]
+    #     adder_mod = [m for m in self.sys.modules if m.name.startswith('Adder')][0]
+    #     array = self.sys.arrays[0]
+
+    #     driver_name = namify(driver_mod.name)
+    #     adder_name = namify(adder_mod.name)
+    #     array_name = namify(array.name)
+        
+    #     # Manually construct the Top module based on the user's request
+    #     # A more general solution would derive this from the analysis data
+    #     self.append_code('class Top(Module):')
+    #     self.indent += 4
+    #     self.append_code('clk = Clock()')
+    #     self.append_code('rst = Reset()')
+    #     self.append_code('')
+    #     self.append_code('@generator')
+    #     self.append_code('def construct(self):')
+    #     self.indent += 4
+        
+    #     # Wires
+    #     self.append_code('# FIFO and Trigger Wires')
+    #     for p in adder_mod.ports:
+    #         pn = namify(p.name)
+    #         self.append_code(f'fifo_{pn}_push_valid = Wire(Bits(1))')
+    #         self.append_code(f'fifo_{pn}_push_data = Wire(Bits({p.dtype.bits}))')
+    #         self.append_code(f'fifo_{pn}_push_ready = Wire(Bits(1))')
+    #         self.append_code(f'fifo_{pn}_pop_valid = Wire(Bits(1))')
+    #         self.append_code(f'fifo_{pn}_pop_data = Wire(Bits({p.dtype.bits}))')
+    #         self.append_code(f'fifo_{pn}_pop_ready = Wire(Bits(1))')
+        
+    #     self.append_code(f'driver_trigger_counter_pop_valid = Wire(Bits(1))')
+    #     self.append_code(f'driver_trigger_counter_pop_ready = Wire(Bits(1))')
+        
+    #     self.append_code(f'adder_trigger_counter_delta = Wire(Bits(8))')
+    #     self.append_code(f'adder_trigger_counter_delta_ready = Wire(Bits(1))')
+    #     self.append_code(f'adder_trigger_counter_pop_valid = Wire(Bits(1))')
+    #     self.append_code(f'adder_trigger_counter_pop_ready = Wire(Bits(1))')
+
+    #     # RegArray
+    #     self.append_code(f'# RegArray Instantiation')
+    #     self.append_code(f'{array_name}_ce = Wire(Bits(1))')
+    #     self.append_code(f'{array_name}_wdata = Wire(Bits({array.scalar_ty.bits}))')
+    #     self.append_code(f'array_reg = Reg(Array(SInt({array.scalar_ty.bits}), {array.size}), clk=self.clk, rst=self.rst, rst_value=[SInt({array.scalar_ty.bits})(0)], ce={array_name}_ce)')
+    #     self.append_code(f'array_reg.assign([{array_name}_wdata.as_sint()])')
+
+    #     # FIFOs
+    #     self.append_code(f'# FIFO Instantiations')
+    #     for p in adder_mod.ports:
+    #         pn = namify(p.name)
+    #         self.append_code(f'fifo_{pn} = FIFO(WIDTH={p.dtype.bits}, DEPTH_LOG2=2)(clk=self.clk, rst_n=~self.rst, push_valid=fifo_{pn}_push_valid, push_data=fifo_{pn}_push_data, pop_ready=fifo_{pn}_pop_ready)')
+    #         self.append_code(f'fifo_{pn}_push_ready.assign(fifo_{pn}.push_ready)')
+    #         self.append_code(f'fifo_{pn}_pop_valid.assign(fifo_{pn}.pop_valid)')
+    #         self.append_code(f'fifo_{pn}_pop_data.assign(fifo_{pn}.pop_data)')
+        
+    #     # Trigger Counters
+    #     self.append_code(f'# TriggerCounter Instantiations')
+    #     self.append_code(f'driver_trigger_counter = TriggerCounter(WIDTH=8)(clk= self.clk, rst_n= ~self.rst, delta=Bits(8)(1), pop_ready=driver_trigger_counter_pop_ready)')
+    #     self.append_code(f'driver_trigger_counter_pop_valid.assign(driver_trigger_counter.pop_valid)')
+        
+    #     self.append_code(f'adder_trigger_counter = TriggerCounter(WIDTH=8)(clk=self.clk, rst_n= ~self.rst, delta=adder_trigger_counter_delta, pop_ready=adder_trigger_counter_pop_ready)')
+    #     self.append_code(f'adder_trigger_counter_delta_ready.assign(adder_trigger_counter.delta_ready)')
+    #     self.append_code(f'adder_trigger_counter_pop_valid.assign(adder_trigger_counter.pop_valid)')
+        
+    #     # Module Instantiations and Connections
+    #     self.append_code(f'# Module Instantiations and Connections')
+    #     driver_ports = f"clk=self.clk, rst=self.rst, trigger_counter_pop_valid=driver_trigger_counter_pop_valid, {array_name}_payload=array_reg, "
+    #     driver_ports += ", ".join([f"fifo_{namify(p.name)}_push_ready=fifo_{namify(p.name)}_push_ready" for p in adder_mod.ports])
+    #     driver_ports += f", {adder_name}_trigger_counter_delta_ready=adder_trigger_counter_delta_ready"
+    #     self.append_code(f'driver = {driver_name}({driver_ports})')
+        
+    #     self.append_code(f'driver_trigger_counter_pop_ready.assign(driver.executed)')
+    #     self.append_code(f'{array_name}_ce.assign(driver.{array_name}_ce)')
+    #     self.append_code(f'{array_name}_wdata.assign(driver.{array_name}_wdata)')
+    #     for p in adder_mod.ports:
+    #         pn = namify(p.name)
+    #         self.append_code(f'fifo_{pn}_push_valid.assign(driver.{pn}_push_valid)')
+    #         self.append_code(f'fifo_{pn}_push_data.assign(driver.{pn}_push_data.as_bits())')
+    #     self.append_code(f'adder_trigger_counter_delta.assign(Mux(driver.{adder_name}_trigger, Bits(8)(0), Bits(8)(1)))')
+
+    #     adder_ports = f"clk=self.clk, rst=self.rst, trigger_counter_pop_valid=adder_trigger_counter_pop_valid, "
+    #     adder_ports += ", ".join([f"{namify(p.name)}=fifo_{namify(p.name)}_pop_data.as_sint(), {namify(p.name)}_valid=fifo_{namify(p.name)}_pop_valid" for p in adder_mod.ports])
+    #     self.append_code(f'adder = {adder_name}({adder_ports})')
+
+    #     for p in adder_mod.ports:
+    #         pn = namify(p.name)
+    #         self.append_code(f'fifo_{pn}_pop_ready.assign(adder.{pn}_pop_ready)')
+    #     self.append_code(f'adder_trigger_counter_pop_ready.assign(adder.executed)')
+
+
+    #     self.indent -= 8
+    #     self.append_code('')
+    #     self.append_code(f'system = System([Top], name="Top", output_directory="sv")')
+    #     self.append_code('system.compile()')
+     
+
+    def _generate_top_harness(self):
+        """
+        Generates a generic Top-level harness that connects all modules based on
+        the analyzed dependencies (async calls, array usage).
+        """
+        self.append_code('class Top(Module):')
+        self.indent += 4
+        self.append_code('clk = Clock()')
+        self.append_code('rst = Reset()')
+        self.append_code('')
+        self.append_code('@generator')
+        self.append_code('def construct(self):')
+        self.indent += 4
+
+        # --- 1. Wire Declarations (Generic) ---
+        self.append_code('# --- Wires for FIFOs, Triggers, and Arrays ---')
+        # Wires for FIFOs (one per callee's port)
+        for callee in self.async_callees:
+            for port in callee.ports:
+                fifo_base_name = f'fifo_{namify(callee.name)}_{namify(port.name)}'
+                self.append_code(f'# Wires for FIFO connected to {callee.name}.{port.name}')
+                self.append_code(f'{fifo_base_name}_push_valid = Wire(Bits(1))')
+                self.append_code(f'{fifo_base_name}_push_data = Wire(Bits({port.dtype.bits}))')
+                self.append_code(f'{fifo_base_name}_push_ready = Wire(Bits(1))')
+                self.append_code(f'{fifo_base_name}_pop_valid = Wire(Bits(1))')
+                self.append_code(f'{fifo_base_name}_pop_data = Wire(Bits({port.dtype.bits}))')
+                self.append_code(f'{fifo_base_name}_pop_ready = Wire(Bits(1))')
+
+        # Wires for TriggerCounters (one per module)
+        for module in self.sys.modules:
+            tc_base_name = f'{namify(module.name)}_trigger_counter'
+            self.append_code(f'# Wires for {module.name}\'s TriggerCounter')
+            self.append_code(f'{tc_base_name}_delta = Wire(Bits(8))')
+            self.append_code(f'{tc_base_name}_delta_ready = Wire(Bits(1))')
+            self.append_code(f'{tc_base_name}_pop_valid = Wire(Bits(1))')
+            self.append_code(f'{tc_base_name}_pop_ready = Wire(Bits(1))')
+
+        # Wires for Arrays (one per global array)
+        for array in self.sys.arrays:
+            arr_name = namify(array.name)
+            self.append_code(f'# Wires for Array {array.name}')
+            self.append_code(f'{arr_name}_ce = Wire(Bits(1))')
+            self.append_code(f'{arr_name}_wdata = Wire(Bits({array.scalar_ty.bits}))')
+            if array.index_bits > 0:
+                self.append_code(f'{arr_name}_widx = Wire(Bits({array.index_bits}))')
+
+
+        # --- 2. Hardware Instantiations (Generic) ---
+        self.append_code('\n# --- Hardware Instantiations ---')
+        # Instantiate Regs for each Array
+        for array in self.sys.arrays:
+            arr_name = namify(array.name)
+            self.append_code(f'reg_{arr_name} = Reg(Array({dump_type(array.scalar_ty)}, {array.size}), clk=self.clk, rst=self.rst, rst_value=[SInt({array.scalar_ty.bits})(0)], ce={arr_name}_ce)')
+        
+        # Instantiate FIFOs
+        for callee in self.async_callees:
+            for port in callee.ports:
+                fifo_base_name = f'fifo_{namify(callee.name)}_{namify(port.name)}'
+                self.append_code(f'{fifo_base_name}_inst = FIFO(WIDTH={port.dtype.bits}, DEPTH_LOG2=2)(clk=self.clk, rst_n=~self.rst, push_valid={fifo_base_name}_push_valid, push_data={fifo_base_name}_push_data, pop_ready={fifo_base_name}_pop_ready)')
+                self.append_code(f'{fifo_base_name}_push_ready.assign({fifo_base_name}_inst.push_ready)')
+                self.append_code(f'{fifo_base_name}_pop_valid.assign({fifo_base_name}_inst.pop_valid)')
+                self.append_code(f'{fifo_base_name}_pop_data.assign({fifo_base_name}_inst.pop_data)')
+
+        # Instantiate TriggerCounters
+        for module in self.sys.modules:
+            tc_base_name = f'{namify(module.name)}_trigger_counter'
+            self.append_code(f'{tc_base_name}_inst = TriggerCounter(WIDTH=8)(clk=self.clk, rst_n=~self.rst, delta={tc_base_name}_delta, pop_ready={tc_base_name}_pop_ready)')
+            self.append_code(f'{tc_base_name}_delta_ready.assign({tc_base_name}_inst.delta_ready)')
+            self.append_code(f'{tc_base_name}_pop_valid.assign({tc_base_name}_inst.pop_valid)')
+
+
+        # --- 3. Module Instantiations and Connections (Generic) ---
+        self.append_code('\n# --- Module Instantiations and Connections ---')
+        for module in self.sys.modules:
+            mod_name = namify(module.name)
+            self.append_code(f'# Instantiation for {module.name}')
+            
+            # Build the port map for the module instance
+            port_map = [f'clk=self.clk', f'rst=self.rst']
+            port_map.append(f"trigger_counter_pop_valid={mod_name}_trigger_counter_pop_valid")
+
+            for arr, users in self.array_users.items():
+                if module in users: port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
+            
+            callees_of_this_module = [c for c, callers in self.async_callees.items() if module in callers]
+            for callee in callees_of_this_module:
+                for port in callee.ports:
+                    port_map.append(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_ready=fifo_{namify(callee.name)}_{namify(port.name)}_push_ready")
+                port_map.append(f"{namify(callee.name)}_trigger_counter_delta_ready={namify(callee.name)}_trigger_counter_delta_ready")
+            
+            if module in self.async_callees:
+                for port in module.ports:
+                    fifo_base_name = f'fifo_{mod_name}_{namify(port.name)}'
+                    port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data.{dump_type_cast(port.dtype)}")
+                    port_map.append(f"{namify(port.name)}_valid={fifo_base_name}_pop_valid")
+            
+            # Instantiate the module
+            self.append_code(f"inst_{mod_name} = {mod_name}({', '.join(port_map)})")
+
+            # Connect the module's outputs
+            self.append_code(f"{mod_name}_trigger_counter_pop_ready.assign(inst_{mod_name}.executed)")
+            
+            for callee in callees_of_this_module:
+                for port in callee.ports:
+                    self.append_code(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_valid.assign(inst_{mod_name}.{namify(port.name)}_push_valid)")
+                    self.append_code(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_data.assign(inst_{mod_name}.{namify(port.name)}_push_data.as_bits())")
+            
+            if module in self.async_callees:
+                for port in module.ports:
+                    self.append_code(f"fifo_{mod_name}_{namify(port.name)}_pop_ready.assign(inst_{mod_name}.{namify(port.name)}_pop_ready)")
+
+        # --- 4. Array Write-Back Connections (Generic) ---
+        self.append_code('\n# --- Array Write-Back Connections ---')
+        for arr, users in self.array_users.items():
+            arr_name = namify(arr.name)
+            # Find all modules that write to this array
+            writers = [m for m in users if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(m.body))]
+            # For this simple case, we assume one writer. A more complex design would need a Mux.
+            if writers:
+                writer_mod_name = namify(writers[0].name)
+                self.append_code(f"{arr_name}_ce.assign(inst_{writer_mod_name}.{arr_name}_ce)")
+                self.append_code(f"{arr_name}_wdata.assign(inst_{writer_mod_name}.{arr_name}_wdata)")
+                self.append_code(f"reg_{arr_name}.assign([{arr_name}_wdata.{dump_type_cast(arr.scalar_ty)}])")
+
+        # --- 5. Trigger Counter Delta Connections (Generic) ---
+        self.append_code('\n# --- Trigger Counter Delta Connections ---')
+        for module in self.sys.modules:
+            mod_name = namify(module.name)
+            
+            if module in self.async_callees:  # Module is a "callee"
+                callers_of_this_module = self.async_callees[module]
+                trigger_signals = [f"inst_{namify(c.name)}.{mod_name}_trigger" for c in callers_of_this_module]
+                summed_triggers = f"({' + '.join(trigger_signals)})" if len(trigger_signals) > 1 else trigger_signals[0]
+                self.append_code(f"{mod_name}_trigger_counter_delta.assign({summed_triggers}.as_bits(8))")
+            else:  # Module is a "root" (never called)
+                self.append_code(f"{mod_name}_trigger_counter_delta.assign(Bits(8)(1))")
+    
+        self.indent -= 8
+        self.append_code('')
+        self.append_code(f'system = System([Top], name="Top", output_directory="sv")')
         self.append_code('system.compile()')
 
+# The HEADER constant. NOTE the updated TriggerCounter definition.
 HEADER = '''from pycde import Input, Output, Module, System, Clock, Reset
 from pycde import generator, modparams
-from pycde.constructs import Reg, Array, Mux
-from pycde.types import Bits, SInt, UInt\n
+from pycde.constructs import Reg, Array, Mux,Wire
+from pycde.types import Bits, SInt, UInt
+
 
 @modparams
 def FIFO(WIDTH: int, DEPTH_LOG2: int):
@@ -442,14 +764,17 @@ def FIFO(WIDTH: int, DEPTH_LOG2: int):
         pop_data = Output(Bits(WIDTH))
     return FIFOImpl
 
+
 @modparams
 def TriggerCounter(WIDTH: int):
     class TriggerCounterImpl(Module):
         module_name = f"trigger_counter"
         clk = Clock()
         rst_n = Input(Bits(1))
-        trigger = Input(Bits(1))
-        count = Output(Bits(WIDTH))
+        delta = Input(Bits(WIDTH))
+        delta_ready = Output(Bits(1))
+        pop_ready = Input(Bits(1))
+        pop_valid = Output(Bits(1))
     return TriggerCounterImpl
 
 '''
@@ -457,13 +782,9 @@ def TriggerCounter(WIDTH: int):
 def generate_design(fname: str, sys: SysBuilder):
     """Generate a complete Verilog design file for the system."""
     with open(fname, 'w', encoding='utf-8') as fd:
-        # Generate the header
         fd.write(HEADER)
-        # Generate the module implementations
         dumper = CIRCTDumper()
         dumper.visit_system(sys)
         code = '\n'.join(dumper.code)
         fd.write(code)
-        # Generate the top function
-
     return dumper.logs

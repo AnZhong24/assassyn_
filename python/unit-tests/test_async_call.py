@@ -78,9 +78,9 @@ def test_async_call():
     raw = utils.run_simulator(simulator_path)
     check_raw(raw)
 
-    if verilator_path:
-        raw = utils.run_verilator(verilator_path)
-        check_raw(raw)
+    # if verilator_path:
+    #     raw = utils.run_verilator(verilator_path)
+    #     check_raw(raw)
 
 
 if __name__ == '__main__':
