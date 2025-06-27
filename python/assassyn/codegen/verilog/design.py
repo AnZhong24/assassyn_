@@ -229,7 +229,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, Concat):
             a = dump_rval(expr.msb, False)
             b = dump_rval(expr.lsb, False)
-            body = f"{rval} = {{{a}, {b}}}"
+            body = f"{rval} = BitsSignal.concat([{a}.as_bits(), {b}.as_bits()])"
+
+ 
         elif isinstance(expr, Cast):
             dbits = expr.dtype.bits
             a = dump_rval(expr.x, False)
@@ -649,6 +651,7 @@ HEADER = '''from pycde import Input, Output, Module, System, Clock, Reset
 from pycde import generator, modparams
 from pycde.constructs import Reg, Array, Mux,Wire
 from pycde.types import Bits, SInt, UInt
+from pycde.signals import Struct, BitsSignal
 
 
 @modparams
