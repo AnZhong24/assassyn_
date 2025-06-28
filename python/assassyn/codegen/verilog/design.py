@@ -1,6 +1,7 @@
 """Verilog design generation and code dumping."""
 
 from typing import List, Dict, Tuple
+from string import Formatter
 
 from ...analysis import expr_externally_used
 from ...ir.module import Module, Downstream, Port
@@ -161,16 +162,57 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code(f'# {expr}')
         body = None
         rval = dump_rval(expr, False)
+        
         if isinstance(expr, BinaryOp):
-            binop = expr.opcode
-            dtype = expr.dtype
+            binop = expr.opcode 
+            rval = dump_rval(expr, False)
             a = dump_rval(expr.lhs, False)
-            op_str = BinaryOp.OPERATORS[expr.opcode]
-            if binop == BinaryOp.SHR:
-                op_str = ">>>" if dtype.is_signed() else ">>"
             b = dump_rval(expr.rhs, False)
-            body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
-            body = f'{dump_rval(expr, False)} = {body}'
+            dtype = expr.dtype
+            if binop in [BinaryOp.SHL, BinaryOp.SHR] or 'SHR' in str(binop):
+                rval = dump_rval(expr, False)
+                a = f"{a}.as_bits()"
+                b = f"{b}.as_bits()"
+ 
+                op_class_name = None
+                if binop == BinaryOp.SHL:
+                    op_class_name = "comb.ShlOp"
+                elif binop == BinaryOp.SHR:
+                    if expr.lhs.dtype.is_signed(): 
+                        op_class_name = "comb.ShrSOp"
+                    else: 
+                        op_class_name = "comb.ShrUOp"
+                
+                if op_class_name is None:
+                    raise TypeError(f"Unhandled shift operation: {binop}")
+                 
+                body = f"{rval} = {op_class_name}({a}, {b}).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
+            # binop = expr.opcode
+            # dtype = expr.dtype
+            # a = dump_rval(expr.lhs, False)
+            # op_str = BinaryOp.OPERATORS[expr.opcode]
+            # b = dump_rval(expr.rhs, False)
+            # if binop in [BinaryOp.SHL, BinaryOp.SHR] or 'SHR' in str(binop):  
+            #     if expr.rhs.dtype.is_signed(): 
+            #         b = f"{b}.as_bits()"
+            
+            # if binop == BinaryOp.SHR:
+            #     op_str = ">>>" if dtype.is_signed() else ">>"
+            
+            # body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
+            # body = f'{dump_rval(expr, False)} = {body}'
+            elif binop == BinaryOp.MOD: 
+                if expr.dtype.is_signed():
+                    op_class_name = "comb.ModSOp"
+                else:
+                    op_class_name = "comb.ModUOp"
+                
+                body = f"{rval} = {op_class_name}({a}.as_bits(), {b}.as_bits()).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
+            else: 
+                op_str = BinaryOp.OPERATORS[expr.opcode]
+                 
+                op_body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
+                body = f'{rval} = {op_body}'
         elif isinstance(expr, UnaryOp):
             uop = expr.opcode
             op_str = "~" if uop == UnaryOp.FLIP else "-"
@@ -181,15 +223,60 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.expose('fifo_pop', expr)
             body = None
         elif isinstance(expr, Log):
-            formatter = expr.operands[0]
-            args = []
+            formatter_str = expr.operands[0].value
+
+            arg_print_snippets = []
+            condition_snippets = []
+            module_name = namify(self.current_module.name)
+ 
             for i in expr.operands[1:]:
-                self.expose('expr', unwrap_operand(i))
-                rval_arg = dump_rval(unwrap_operand(i), True)
-                args.append(f'dut.{rval_arg}.value')
-            args = ", ".join(args)
+                operand = unwrap_operand(i)
+                if not isinstance(operand, Const):
+                    self.expose('expr', operand)
+                    exposed_name = dump_rval(operand, True)
+                    valid_signal = f'dut.{module_name}.valid_{exposed_name}.value'
+                    condition_snippets.append(valid_signal)
+                    expose_signal = f'int(dut.{module_name}.expose_{exposed_name}.value)'
+                    arg_print_snippets.append(expose_signal)
+                else:
+                    arg_print_snippets.append(str(operand.value))
+ 
+            f_string_content_parts = []
+            arg_iterator = iter(arg_print_snippets)
+
+            for literal_text, field_name, format_spec, conversion in Formatter().parse(formatter_str):
+  
+                if literal_text:
+                    f_string_content_parts.append(literal_text)
+ 
+                if field_name is not None: 
+                    arg_code = next(arg_iterator)
+                    new_placeholder = f"{{{arg_code}"
+                    if conversion:  # for !s, !r, !a
+                        new_placeholder += f"!{conversion}"
+                    if format_spec:  # for :b, :08x,  
+                        new_placeholder += f":{format_spec}"
+                    new_placeholder += "}"
+                    f_string_content_parts.append(new_placeholder)
+
+            f_string_content = "".join(f_string_content_parts)
+            if_condition = " and ".join(condition_snippets)
             self.logs.append(f'# {expr}')
-            self.logs.append(f'print("{formatter}".format({args}))')
+            if if_condition:
+                self.logs.append(f'if ( {if_condition} ):')
+                self.logs.append(f'    print(f"{f_string_content}")')
+            else:
+                self.logs.append(f'print(f"{f_string_content}")')
+                
+            # formatter = expr.operands[0]
+            # args = []
+            # for i in expr.operands[1:]:
+            #     self.expose('expr', unwrap_operand(i))
+            #     rval_arg = dump_rval(unwrap_operand(i), True)
+            #     args.append(f'dut.{rval_arg}.value')
+            # args = ", ".join(args)
+            # self.logs.append(f'# {expr}')
+            # self.logs.append(f'print("{formatter}".format({args}))')
         elif isinstance(expr, ArrayRead):
             array_ref = expr.array
             array_idx = unwrap_operand(expr.idx)
@@ -225,7 +312,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             a = dump_rval(expr.x, False)
             l = expr.l.value.value
             r = expr.r.value.value
-            body = f"{rval} = {a}[{r}:{l}]"
+            body = f"{rval} = {a}.as_bits()[{l}:{r+1}]"
         elif isinstance(expr, Concat):
             a = dump_rval(expr.msb, False)
             b = dump_rval(expr.lsb, False)
@@ -252,14 +339,33 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             cond = dump_rval(expr.cond, False)
             true_value = dump_rval(expr.true_value, False)
             false_value = dump_rval(expr.false_value, False)
-            body = f'{rval} = Mux({cond}, {true_value}, {false_value})'
+            body = f'{rval} = Mux({cond}, {false_value}, {true_value})'
         elif isinstance(expr, Bind):
             body = None
         elif isinstance(expr, Select1Hot):
-             # This implementation is simplified and may need adjustment for complex cases
             cond = dump_rval(expr.cond, False)
             values = [dump_rval(v, False) for v in expr.values]
-            body = f"{rval} = Mux1H({cond}, [{', '.join(values)}])"
+             
+            rval = dump_rval(expr, False)
+             
+            value_type = dump_type(expr.values[0].dtype)
+            zero_value = f"{value_type}(0)"
+  
+            for i, value_name in enumerate(values): 
+                gated_term_name = f"{rval}_gated_{i}"
+                if i == 0: 
+                    mux_code = (
+                        f"{gated_term_name} = Mux({cond}.as_bits()[{i}], {zero_value}, {value_name})"
+                    )
+                else :
+                    mux_code = (
+                        f"{gated_term_name} = Mux({cond}.as_bits()[{i}], {last_gated_term_name}, {value_name})"
+                    )
+                
+                last_gated_term_name = gated_term_name
+                self.append_code(mux_code)
+                 
+            body = f"{rval} = {last_gated_term_name} "
         elif isinstance(expr, Intrinsic):
             intrinsic = expr.opcode
             if intrinsic == Intrinsic.FINISH:
@@ -426,17 +532,22 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     port_name = f'fifo_{namify(callee.name)}_{namify(port.name)}_push_ready'
                     self.append_code(f'{port_name} = Input(Bits(1))')
                 self.append_code(f'{namify(callee.name)}_trigger_counter_delta_ready = Input(Bits(1))')
-        # ...
+       
         # Add array ports
         for arr in self.sys.arrays:
             # CHECK: Only add array ports if the current module uses the array
             if node in self.array_users.get(arr, []):
                 self.append_code(f'{namify(arr.name)}_payload = Input(Array({dump_type(arr.scalar_ty)}, {arr.size}))')
-                self.append_code(f'{namify(arr.name)}_ce = Output(Bits(1))')
-                self.append_code(f'{namify(arr.name)}_wdata = Output(Bits({arr.scalar_ty.bits}))')
-                if arr.index_bits > 0:
-                    self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(arr.index_type())})')
-        
+ 
+                is_writer = any(isinstance(e, ArrayWrite) and e.array == arr
+                                for e in self._walk_expressions(node.body))
+
+                if is_writer:
+                    self.append_code(f'{namify(arr.name)}_ce = Output(Bits(1))')
+                    self.append_code(f'{namify(arr.name)}_wdata = Output(Bits({arr.scalar_ty.bits}))')
+                    if arr.index_bits > 0:
+                        self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(arr.index_type())})')
+
         # Add fifo/trigger output ports
         if is_driver:
             for callee in self.sys.modules:
@@ -545,7 +656,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
 
         # Wires for Arrays (one per global array)
         for array in self.sys.arrays:
-            arr_name = namify(array.name)
+            arr_name = namify(array.name) 
             self.append_code(f'# Wires for Array {array.name}')
             self.append_code(f'{arr_name}_ce = Wire(Bits(1))')
             self.append_code(f'{arr_name}_wdata = Wire(Bits({array.scalar_ty.bits}))')
@@ -556,10 +667,22 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         # --- 2. Hardware Instantiations (Generic) ---
         self.append_code('\n# --- Hardware Instantiations ---')
         # Instantiate Regs for each Array
+        array_init = {}
         for array in self.sys.arrays:
             arr_name = namify(array.name)
-            self.append_code(f'reg_{arr_name} = Reg(Array({dump_type(array.scalar_ty)}, {array.size}), clk=self.clk, rst=self.rst, rst_value=[{dump_type(array.scalar_ty)}(0)], ce={arr_name}_ce)')
-        
+            arr_type = dump_type(array.scalar_ty)
+            
+            if hasattr(array, 'initializer') and array.initializer is not None: 
+                rst_vals = [f"{arr_type}({val})" for val in array.initializer]
+                rst_value_str = f"[{', '.join(rst_vals)}]"
+            else: 
+                rst_value_str = f"[{', '.join([f'{arr_type}(0)'] * array.size)}]"
+            array_init[arr_name] = rst_value_str
+            self.append_code(
+                f'reg_{arr_name} = Reg(Array({arr_type}, {array.size}), '
+                f'clk=self.clk, rst=self.rst, rst_value={rst_value_str}, '
+                f'ce={arr_name}_ce)'
+            )
         # Instantiate FIFOs
         for callee in self.async_callees:
             for port in callee.ports:
@@ -621,15 +744,29 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('\n# --- Array Write-Back Connections ---')
         for arr, users in self.array_users.items():
             arr_name = namify(arr.name)
-            # Find all modules that write to this array
-            writers = [m for m in users if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(m.body))]
-            # For this simple case, we assume one writer. A more complex design would need a Mux.
-            if writers:
+             
+            writers = [
+                m for m in users
+                if any(isinstance(e, ArrayWrite) and e.array == arr
+                       for e in self._walk_expressions(m.body))
+            ]
+ 
+            if writers:  
                 writer_mod_name = namify(writers[0].name)
                 self.append_code(f"{arr_name}_ce.assign(inst_{writer_mod_name}.{arr_name}_ce)")
                 self.append_code(f"{arr_name}_wdata.assign(inst_{writer_mod_name}.{arr_name}_wdata)")
+                if arr.index_bits > 0:
+                    self.append_code(f"{arr_name}_widx.assign(inst_{writer_mod_name}.{arr_name}_widx)")
+                 
                 self.append_code(f"reg_{arr_name}.assign([{arr_name}_wdata.{dump_type_cast(arr.scalar_ty)}])")
 
+            else: 
+                self.append_code(f'# Tying off write ports for read-only array {arr_name}')
+                self.append_code(f"{arr_name}_ce.assign(Bits(1)(0))")
+                self.append_code(f"{arr_name}_wdata.assign(Bits({arr.scalar_ty.bits})(0))")
+                self.append_code(f"reg_{arr_name}.assign({array_init[arr_name]})")
+                if arr.index_bits > 0:
+                    self.append_code(f"{arr_name}_widx.assign(Bits({arr.index_bits})(0))")
         # --- 5. Trigger Counter Delta Connections (Generic) ---
         self.append_code('\n# --- Trigger Counter Delta Connections ---')
         for module in self.sys.modules:
@@ -654,7 +791,7 @@ from pycde import generator, modparams
 from pycde.constructs import Reg, Array, Mux,Wire
 from pycde.types import Bits, SInt, UInt
 from pycde.signals import Struct, BitsSignal
-
+from pycde.dialects import comb
 
 @modparams
 def FIFO(WIDTH: int, DEPTH_LOG2: int):
