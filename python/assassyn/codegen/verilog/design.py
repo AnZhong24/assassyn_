@@ -235,15 +235,17 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, Cast):
             dbits = expr.dtype.bits
             a = dump_rval(expr.x, False)
-            src_dtype = expr.src_type()
+            src_dtype = expr.x.dtype
+            
             pad = dbits - src_dtype.bits
             cast_body = ""
-            if expr.cast_kind == Cast.BITCAST:
+            cast_kind =  expr.opcode 
+            if cast_kind == Cast.BITCAST:
                 assert pad == 0
                 cast_body = f"{a}.{dump_type_cast(expr.dtype)}"
-            elif expr.cast_kind == Cast.ZEXT:
+            elif cast_kind == Cast.ZEXT:
                 cast_body = f"{{{pad}'b0, {a}}}"
-            elif expr.cast_kind == Cast.SEXT:
+            elif cast_kind == Cast.SEXT:
                 cast_body = f"{{{pad}'{{{a}[{src_dtype.bits - 1}]}}, {a}}}"
             body = f"{rval} = {cast_body}"
         elif isinstance(expr, Select):
@@ -556,7 +558,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         # Instantiate Regs for each Array
         for array in self.sys.arrays:
             arr_name = namify(array.name)
-            self.append_code(f'reg_{arr_name} = Reg(Array({dump_type(array.scalar_ty)}, {array.size}), clk=self.clk, rst=self.rst, rst_value=[SInt({array.scalar_ty.bits})(0)], ce={arr_name}_ce)')
+            self.append_code(f'reg_{arr_name} = Reg(Array({dump_type(array.scalar_ty)}, {array.size}), clk=self.clk, rst=self.rst, rst_value=[{dump_type(array.scalar_ty)}(0)], ce={arr_name}_ce)')
         
         # Instantiate FIFOs
         for callee in self.async_callees:
