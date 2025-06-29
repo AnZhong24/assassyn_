@@ -169,12 +169,12 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         
         if isinstance(expr, BinaryOp):
             binop = expr.opcode 
-            rval = dump_rval(expr, False)
+             
             a = dump_rval(expr.lhs, False)
             b = dump_rval(expr.rhs, False)
             dtype = expr.dtype
             if binop in [BinaryOp.SHL, BinaryOp.SHR] or 'SHR' in str(binop):
-                rval = dump_rval(expr, False)
+                
                 a = f"{a}.as_bits()"
                 b = f"{b}.as_bits()"
  
@@ -191,20 +191,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     raise TypeError(f"Unhandled shift operation: {binop}")
                  
                 body = f"{rval} = {op_class_name}({a}, {b}).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
-            # binop = expr.opcode
-            # dtype = expr.dtype
-            # a = dump_rval(expr.lhs, False)
-            # op_str = BinaryOp.OPERATORS[expr.opcode]
-            # b = dump_rval(expr.rhs, False)
-            # if binop in [BinaryOp.SHL, BinaryOp.SHR] or 'SHR' in str(binop):  
-            #     if expr.rhs.dtype.is_signed(): 
-            #         b = f"{b}.as_bits()"
-            
-            # if binop == BinaryOp.SHR:
-            #     op_str = ">>>" if dtype.is_signed() else ">>"
-            
-            # body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
-            # body = f'{dump_rval(expr, False)} = {body}'
+         
             elif binop == BinaryOp.MOD: 
                 if expr.dtype.is_signed():
                     op_class_name = "comb.ModSOp"
@@ -223,9 +210,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             x = dump_rval(expr.x, False)
             body = f"{op_str}{x}"
             body = f'{rval} = {body}'
-        elif isinstance(expr, FIFOPop):
-            self.expose('fifo_pop', expr)
-            body = None
+        
         elif isinstance(expr, Log):
             formatter_str = expr.operands[0].value
 
@@ -255,7 +240,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
  
                 if field_name is not None: 
                     arg_code = next(arg_iterator)
-                    new_placeholder = f"{arg_code}"
+                    new_placeholder =  f"{{{arg_code}"
                     if conversion:  # for !s, !r, !a
                         new_placeholder += f"!{conversion}"
                     if format_spec:  # for :b, :08x,  
@@ -281,19 +266,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.logs.append(f'# {expr}')
             if if_condition:
                 self.logs.append(f'if ( {if_condition} ):')
-                self.logs.append(f'    print(f"{f_string_content}")')
+                self.logs.append(f'    print(f"{f_string_content}") ')
             else:
                 self.logs.append(f'print(f"{f_string_content}")')
-
-            # formatter = expr.operands[0]
-            # args = []
-            # for i in expr.operands[1:]:
-            #     self.expose('expr', unwrap_operand(i))
-            #     rval_arg = dump_rval(unwrap_operand(i), True)
-            #     args.append(f'dut.{rval_arg}.value')
-            # args = ", ".join(args)
-            # self.logs.append(f'# {expr}')
-            # self.logs.append(f'print("{formatter}".format({args}))')
+ 
         elif isinstance(expr, ArrayRead):
             array_ref = expr.array
             array_idx = unwrap_operand(expr.idx)
@@ -306,13 +282,21 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.expose('array', expr)
         elif isinstance(expr, FIFOPush):
             self.expose('fifo', expr)
+        elif isinstance(expr,FIFOPop):
+            rval = namify(expr.as_operand())
+            fifo_name = dump_rval( expr.fifo, False) 
+            body = f'{rval} = self.{fifo_name}' 
+            print(body)
+            self.expose('fifo_pop', expr)
+ 
         elif isinstance(expr, PureIntrinsic):
             intrinsic = expr.opcode
             if intrinsic in [PureIntrinsic.FIFO_VALID, PureIntrinsic.FIFO_PEEK]:
                 fifo = expr.args[0]
                 fifo_name = dump_rval(fifo, False)
                 if intrinsic == PureIntrinsic.FIFO_PEEK:
-                    body = f'{rval} = self.{fifo_name}_data'
+                    body = f'{rval} = self.{fifo_name}'
+                    self.expose('expr', expr)
                 elif intrinsic == PureIntrinsic.FIFO_VALID:
                     body = f'{rval} = self.{fifo_name}_valid'
             elif intrinsic == PureIntrinsic.VALUE_VALID:
@@ -362,9 +346,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, Select1Hot):
             cond = dump_rval(expr.cond, False)
             values = [dump_rval(v, False) for v in expr.values]
-             
-            rval = dump_rval(expr, False)
-             
+              
             value_type = dump_type(expr.values[0].dtype)
             zero_value = f"{value_type}(0)"
   
@@ -413,13 +395,22 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     
     def cleanup_post_generation(self):
         self.append_code('')
-
-        is_driver =  self.sys.modules and (self.sys.modules[0] == self.current_module)  
+        is_driver = self.current_module not in self.async_callees
         if is_driver:
             self.append_code('executed_wire = self.trigger_counter_pop_valid')
         elif self.current_module in self.async_callees:
-            # For the Adder, the execution condition is already stored in self.wait_until
-            self.append_code(f'executed_wire = {self.wait_until}')
+            exec_conditions = []
+             
+            exec_conditions.append("self.trigger_counter_pop_valid")
+             
+            if self.wait_until:
+                exec_conditions.append(self.wait_until)
+ 
+            for port in self.current_module.ports:
+                exec_conditions.append(f"self.{namify(port.name)}_valid")
+ 
+            final_exec_cond = " & ".join(exec_conditions)
+            self.append_code(f'executed_wire = {final_exec_cond}')
         else:
             # Fallback for any other module type
             self.append_code('executed_wire = Bits(1)(1)')
@@ -482,8 +473,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if has_pop: 
                     fifo = dump_rval(key, False)
                     pop_expr = [e for e, p in exposes if isinstance(e, FIFOPop)][0]
+                     
                     self.append_code(f'# {pop_expr}')
                     self.append_code(f'self.{fifo}_pop_ready = executed_wire')
+                    
                     
             elif isinstance(key, Module): # This is for AsyncCall triggers
                 rval = dump_rval(key, False)
@@ -520,7 +513,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.exposed_ports_to_add = []
         
         is_async_callee = node in self.async_callees
-        is_driver =  self.sys.modules and (self.sys.modules[0] == node)
+        is_driver = node not in self.async_callees
         
         self.append_code(f'class {namify(node.name)}(Module):')
         self.indent += 4
