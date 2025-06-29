@@ -397,7 +397,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     def cleanup_post_generation(self):
         self.append_code('')
 
-        is_driver = self.current_module.name.startswith('Driver')
+        is_driver =  self.sys.modules and (self.sys.modules[0] == self.current_module)  
         if is_driver:
             self.append_code('executed_wire = self.trigger_counter_pop_valid')
         elif self.current_module in self.async_callees:
@@ -503,7 +503,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.exposed_ports_to_add = []
         
         is_async_callee = node in self.async_callees
-        is_driver = node.name == 'Driver'
+        is_driver =  self.sys.modules and (self.sys.modules[0] == node)
         
         self.append_code(f'class {namify(node.name)}(Module):')
         self.indent += 4
@@ -522,7 +522,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         if is_async_callee:
             self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
 
-        if node.name.startswith('Driver'):
+        if is_driver:
             self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
             # Find what it calls to add necessary ports
             for callee in self.sys.modules:
