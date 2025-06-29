@@ -286,7 +286,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             rval = namify(expr.as_operand())
             fifo_name = dump_rval( expr.fifo, False) 
             body = f'{rval} = self.{fifo_name}' 
-            print(body)
+            
             self.expose('fifo_pop', expr)
  
         elif isinstance(expr, PureIntrinsic):
@@ -395,26 +395,32 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     
     def cleanup_post_generation(self):
         self.append_code('')
+        exec_conditions = []
         is_driver = self.current_module not in self.async_callees
-        if is_driver:
-            self.append_code('executed_wire = self.trigger_counter_pop_valid')
-        elif self.current_module in self.async_callees:
-            exec_conditions = []
-             
+        
+        # Condition 1: The module's own trigger counter must be valid.
+        if is_driver or self.current_module in self.async_callees:
             exec_conditions.append("self.trigger_counter_pop_valid")
-             
-            if self.wait_until:
-                exec_conditions.append(self.wait_until)
- 
-            for port in self.current_module.ports:
-                exec_conditions.append(f"self.{namify(port.name)}_valid")
- 
-            final_exec_cond = " & ".join(exec_conditions)
-            self.append_code(f'executed_wire = {final_exec_cond}')
-        else:
-            # Fallback for any other module type
+            
+        # Condition 2: Any 'wait_until' condition must be met.
+        if self.wait_until:
+            exec_conditions.append(f"({self.wait_until})")
+
+        # Condition 3: If the module pops from any FIFOs, those FIFOs must be valid.
+        ports_being_popped = set()
+        for key, exposes in self._exposes.items():
+            if isinstance(key, Port) and any(isinstance(e, FIFOPop) for e, p in exposes):
+                ports_being_popped.add(key)
+        
+        for port in ports_being_popped:
+            exec_conditions.append(f"self.{namify(port.name)}_valid")
+
+        # --- Generate the final executed_wire ---
+        if not exec_conditions:
             self.append_code('executed_wire = Bits(1)(1)')
- 
+        else:
+            self.append_code(f"executed_wire = {' & '.join(exec_conditions)}")
+
         for key, exposes in self._exposes.items():
             if isinstance(key, Array):
                 array = dump_rval(key, False)
@@ -522,29 +528,39 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('executed = Output(Bits(1))')
 
         self.append_code('cycle_count = Input(UInt(64))')
+        if is_driver or node in self.async_callees:
+            self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
 
-        # Add standard ports
+        # Add standard channel INPUT ports (e.g., 'a', 'b', 'v')
         for i in node.ports:
             name = namify(i.name)
             self.append_code(f'{name} = Input({dump_type(i.dtype)})')
             self.append_code(f'{name}_valid = Input(Bits(1))')
-            self.append_code(f'{name}_pop_ready = Output(Bits(1))')
-        
-        # Add handshake ports based on analysis
-        if is_async_callee:
-            self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
+            # Add 'pop_ready' OUTPUT only if .pop() is actually used on this port
+            has_pop = any(isinstance(e, FIFOPop) and e.fifo == i
+                          for e in self._walk_expressions(node.body))
+            if has_pop:
+                self.append_code(f'{name}_pop_ready = Output(Bits(1))')
 
-        if is_driver:
-            self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
-            # Find what it calls to add necessary ports
-            for callee in self.sys.modules:
-                if callee == node: continue
-                for port in callee.ports: 
-                    # The port name must include the callee's name and the port's name.
-                    port_name = f'fifo_{namify(callee.name)}_{namify(port.name)}_push_ready'
-                    self.append_code(f'{port_name} = Input(Bits(1))')
-                self.append_code(f'{namify(callee.name)}_trigger_counter_delta_ready = Input(Bits(1))')
-       
+        pushes = [e for e in self._walk_expressions(node.body) if isinstance(e, FIFOPush)]
+        calls = [e for e in self._walk_expressions(node.body) if isinstance(e, AsyncCall)]
+
+        # 3a. 为它需要交互的下游模块，添加 INPUT 握手端口
+        for p in pushes:
+            port_name = f'fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready'
+            self.append_code(f'{port_name} = Input(Bits(1))')
+        for c in calls:
+            port_name = f'{namify(c.bind.callee.name)}_trigger_counter_delta_ready'
+            self.append_code(f'{port_name} = Input(Bits(1))')
+
+        # 3b. 为它自己发出的 push 和 call 操作，添加 OUTPUT 端口
+        for p in pushes:
+            # 关键：端口名直接从 push 操作的 fifo 端口名获取
+            self.append_code(f'{namify(p.fifo.name)}_push_valid = Output(Bits(1))')
+            self.append_code(f'{namify(p.fifo.name)}_push_data = Output({dump_type(p.val.dtype)})')
+        for c in calls:
+            self.append_code(f'{namify(c.bind.callee.name)}_trigger = Output(Bits(1))')
+        
         # Add array ports
         for arr in self.sys.arrays:
             # CHECK: Only add array ports if the current module uses the array
@@ -559,19 +575,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     self.append_code(f'{namify(arr.name)}_wdata = Output(Bits({arr.scalar_ty.bits}))')
                     if arr.index_bits > 0:
                         self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(arr.index_type())})')
-
-        # Add fifo/trigger output ports
-        if is_driver:
-            for callee in self.sys.modules:
-                if callee == node: continue
-                for port in callee.ports:
-                    self.append_code(f'{namify(port.name)}_push_valid = Output(Bits(1))')
-                    self.append_code(f'{namify(port.name)}_push_data = Output({dump_type(port.dtype)})')
-                self.append_code(f'{namify(callee.name)}_trigger = Output(Bits(1))')
-        
-        # Add exposed value ports
-        # A more robust solution would pre-analyze these
-        
+ 
         self.append_code('')
         self.append_code('@generator')
         self.append_code('def construct(self):')
@@ -727,40 +731,55 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             
             # Build the port map for the module instance
             port_map = [f'clk=self.clk', f'rst=self.rst']
-            port_map.append(f"trigger_counter_pop_valid={mod_name}_trigger_counter_pop_valid")
             
+            # Connect required trigger/cycle ports
+            if module in self.async_callees or module not in self.async_callees:
+                port_map.append(f"trigger_counter_pop_valid={mod_name}_trigger_counter_pop_valid")
             port_map.append(f"cycle_count=cycle_count")
 
+            # Connect input payloads from arrays
             for arr, users in self.array_users.items():
-                if module in users: port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
+                if module in users:
+                    port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
             
-            callees_of_this_module = [c for c, callers in self.async_callees.items() if module in callers]
-            for callee in callees_of_this_module:
-                for port in callee.ports:
-                    port_map.append(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_ready=fifo_{namify(callee.name)}_{namify(port.name)}_push_ready")
-                port_map.append(f"{namify(callee.name)}_trigger_counter_delta_ready={namify(callee.name)}_trigger_counter_delta_ready")
-            
+            # --- KEY FIX STARTS HERE ---
+            # Analyze module body to connect required handshake INPUTS
+            pushes = [e for e in self._walk_expressions(module.body) if isinstance(e, FIFOPush)]
+            calls = [e for e in self._walk_expressions(module.body) if isinstance(e, AsyncCall)]
+            for p in pushes:
+                # Add 'fifo_Callee_port_push_ready=fifo_Callee_port_push_ready' to the port map
+                port_map.append(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready=fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready")
+            for c in calls:
+                # Add 'Callee_trigger_counter_delta_ready=Callee_trigger_counter_delta_ready'
+                port_map.append(f"{namify(c.bind.callee.name)}_trigger_counter_delta_ready={namify(c.bind.callee.name)}_trigger_counter_delta_ready")
+            # --- KEY FIX ENDS HERE ---
+
+            # Connect input data channels (if it's a callee)
             if module in self.async_callees:
                 for port in module.ports:
                     fifo_base_name = f'fifo_{mod_name}_{namify(port.name)}'
                     port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data.{dump_type_cast(port.dtype)}")
                     port_map.append(f"{namify(port.name)}_valid={fifo_base_name}_pop_valid")
             
-            # Instantiate the module
+            # Instantiate the module with the complete port map
             self.append_code(f"inst_{mod_name} = {mod_name}({', '.join(port_map)})")
 
-            # Connect the module's outputs
+            # --- Connect the module's OUTPUTS back to wires ---
+            
+            # Connect main 'executed' output
             self.append_code(f"{mod_name}_trigger_counter_pop_ready.assign(inst_{mod_name}.executed)")
             
-            for callee in callees_of_this_module:
-                for port in callee.ports:
-                    self.append_code(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_valid.assign(inst_{mod_name}.{namify(port.name)}_push_valid)")
-                    self.append_code(f"fifo_{namify(callee.name)}_{namify(port.name)}_push_data.assign(inst_{mod_name}.{namify(port.name)}_push_data.as_bits())")
-            
-            if module in self.async_callees:
-                for port in module.ports:
+            # Connect data channel pop_ready outputs
+            for port in module.ports:
+                if any(isinstance(e, FIFOPop) and e.fifo == port for e in self._walk_expressions(module.body)):
                     self.append_code(f"fifo_{mod_name}_{namify(port.name)}_pop_ready.assign(inst_{mod_name}.{namify(port.name)}_pop_ready)")
 
+            # Connect data channel push outputs
+            for p in pushes:
+                # fifo_Sub_a_push_valid.assign(inst_Lhs.a_push_valid)
+                self.append_code(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_valid.assign(inst_{mod_name}.{namify(p.fifo.name)}_push_valid)")
+                self.append_code(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_data.assign(inst_{mod_name}.{namify(p.fifo.name)}_push_data.as_bits())")
+ 
         # --- 4. Array Write-Back Connections (Generic) ---
         self.append_code('\n# --- Array Write-Back Connections ---')
         for arr, users in self.array_users.items():
