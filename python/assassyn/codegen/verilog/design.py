@@ -7,7 +7,7 @@ from ...analysis import expr_externally_used
 from ...ir.module import Module, Downstream, Port
 from ...builder import SysBuilder
 from ...ir.visitor import Visitor
-from ...ir.block import Block, CondBlock
+from ...ir.block import Block, CondBlock,CycledBlock
 from ...ir.const import Const
 from ...ir.array import Array
 from ...ir.dtype import Int, UInt, Bits, DType
@@ -148,6 +148,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         if isinstance(node, CondBlock):
             cond = dump_rval(node.cond, False)
             self.cond_stack.append("(" + cond + ")")
+         
+        if isinstance(node,CycledBlock): 
+            self.cond_stack.append(f"cycle_count == {node.cycle}")
         for i in node.body:
             if isinstance(i, Expr):
                 self.visit_expr(i)
@@ -155,8 +158,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.visit_block(i)
             else:
                 raise ValueError(f'Unknown node type: {type(node)}')
-        if isinstance(node, CondBlock):
+        if isinstance(node, CondBlock) or isinstance(node,CycledBlock):
             self.cond_stack.pop()
+
 
     def visit_expr(self, expr: Expr):  # pylint: disable=arguments-renamed,too-many-locals,too-many-branches,too-many-statements
         self.append_code(f'# {expr}')
@@ -243,7 +247,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
  
             f_string_content_parts = []
             arg_iterator = iter(arg_print_snippets)
-
+ 
             for literal_text, field_name, format_spec, conversion in Formatter().parse(formatter_str):
   
                 if literal_text:
@@ -251,7 +255,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
  
                 if field_name is not None: 
                     arg_code = next(arg_iterator)
-                    new_placeholder = f"{{{arg_code}"
+                    new_placeholder = f"{arg_code}"
                     if conversion:  # for !s, !r, !a
                         new_placeholder += f"!{conversion}"
                     if format_spec:  # for :b, :08x,  
@@ -260,14 +264,27 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     f_string_content_parts.append(new_placeholder)
 
             f_string_content = "".join(f_string_content_parts)
-            if_condition = " and ".join(condition_snippets)
+            
+
+            block_condition = self.get_pred() 
+            block_condition=block_condition.replace('cycle_count','dut.global_cycle_count')
+            final_conditions = []
+            
+            if block_condition != "Bits(1)(1)":
+                final_conditions.append(block_condition.replace("self.", "dut.{module_name}."))
+ 
+            if condition_snippets:
+                final_conditions.append(" and ".join(condition_snippets))
+             
+            if_condition = " and ".join(final_conditions)
+
             self.logs.append(f'# {expr}')
             if if_condition:
                 self.logs.append(f'if ( {if_condition} ):')
                 self.logs.append(f'    print(f"{f_string_content}")')
             else:
                 self.logs.append(f'print(f"{f_string_content}")')
-                
+
             # formatter = expr.operands[0]
             # args = []
             # for i in expr.operands[1:]:
@@ -510,7 +527,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('clk = Clock()')
         self.append_code('rst = Reset()')
         self.append_code('executed = Output(Bits(1))')
-        
+
+        self.append_code('cycle_count = Input(UInt(64))')
+
         # Add standard ports
         for i in node.ports:
             name = namify(i.name)
@@ -626,11 +645,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.indent += 4
         self.append_code('clk = Clock()')
         self.append_code('rst = Reset()')
+        self.append_code('global_cycle_count = Output(UInt(64))')
         self.append_code('')
         self.append_code('@generator')
         self.append_code('def construct(self):')
         self.indent += 4
 
+        self.append_code('\n# --- Global Cycle Counter ---')
+        self.append_code('# A free-running counter for testbench control')
+         
+        self.append_code('cycle_count = Reg(UInt(64), clk=self.clk, rst=self.rst, rst_value=0)')
+        self.append_code('cycle_count.assign( (cycle_count + UInt(64)(1)).as_bits()[0:64].as_uint() )')
+        self.append_code('self.global_cycle_count = cycle_count')
         # --- 1. Wire Declarations (Generic) ---
         self.append_code('# --- Wires for FIFOs, Triggers, and Arrays ---')
         # Wires for FIFOs (one per callee's port)
@@ -709,6 +735,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             # Build the port map for the module instance
             port_map = [f'clk=self.clk', f'rst=self.rst']
             port_map.append(f"trigger_counter_pop_valid={mod_name}_trigger_counter_pop_valid")
+            
+            port_map.append(f"cycle_count=cycle_count")
 
             for arr, users in self.array_users.items():
                 if module in users: port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
