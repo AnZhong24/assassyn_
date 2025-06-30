@@ -112,8 +112,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     def get_pred(self) -> str:
         """Get the current predicate for conditional execution."""
         if not self.cond_stack:
-            return "Bits(1)(1)"
-        return " & ".join(self.cond_stack)
+            return "Bits(1)(1)" 
+        return " & ".join([s for s, _ in self.cond_stack])
 
     def append_code(self, code: str):
         """Append code with proper indentation."""
@@ -127,6 +127,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         key = None
         if kind == 'expr':
             key = expr
+            
         elif kind == 'array':
             assert isinstance(expr, (ArrayRead, ArrayWrite))
             key = expr.array
@@ -139,18 +140,34 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif kind == 'trigger':
             assert isinstance(expr, AsyncCall)
             key = expr.bind.callee
+       
         assert key is not None
         if key not in self._exposes:
             self._exposes[key] = []
         self._exposes[key].append((expr, self.get_pred()))
 
     def visit_block(self, node: Block):
-        if isinstance(node, CondBlock):
-            cond = dump_rval(node.cond, False)
-            self.cond_stack.append("(" + cond + ")")
-         
-        if isinstance(node,CycledBlock): 
-            self.cond_stack.append(f"cycle_count == {node.cycle}")
+        is_cond = isinstance(node, CondBlock)
+        is_cycle = isinstance(node, CycledBlock)
+
+        if is_cond: 
+            cond_str = dump_rval(node.cond, False)
+            self.cond_stack.append((f"({cond_str})", node))
+            def has_side_effect(block: Block) -> bool:
+                for item in block.body:
+                    if isinstance(item, Log):
+                        return True
+                    if isinstance(item, Block) and has_side_effect(item):
+                        return True
+                return False
+            
+            if has_side_effect(node):
+                self.expose('expr', node.cond)
+                 
+ 
+        elif is_cycle: 
+            self.cond_stack.append((f"(self.cycle_count == {node.cycle})", node))
+            
         for i in node.body:
             if isinstance(i, Expr):
                 self.visit_expr(i)
@@ -158,7 +175,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.visit_block(i)
             else:
                 raise ValueError(f'Unknown node type: {type(node)}')
-        if isinstance(node, CondBlock) or isinstance(node,CycledBlock):
+        
+        if is_cond or is_cycle: 
             self.cond_stack.pop()
 
 
@@ -254,9 +272,20 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             block_condition = self.get_pred() 
             block_condition=block_condition.replace('cycle_count','dut.global_cycle_count')
             final_conditions = []
-            
-            if block_condition != "Bits(1)(1)":
-                final_conditions.append(block_condition.replace("self.", "dut.{module_name}."))
+             
+            for cond_str, cond_obj in self.cond_stack: 
+                if isinstance(cond_obj, CycledBlock): 
+                    tb_cond_path = cond_str.replace("self.cycle_count", f"dut.global_cycle_count.value")
+                    final_conditions.append(tb_cond_path)
+                 
+                elif isinstance(cond_obj, CondBlock):  
+                    exposed_name = dump_rval(cond_obj.cond, False)
+                    
+                    tb_expose_path = f"(dut.{module_name}.expose_{exposed_name}.value)"
+                    tb_valid_path = f"(dut.{module_name}.valid_{exposed_name}.value)"
+                    
+                    combined_cond = f"({tb_valid_path} & {tb_expose_path})"
+                    final_conditions.append(combined_cond)
  
             if condition_snippets:
                 final_conditions.append(" and ".join(condition_snippets))
@@ -269,7 +298,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.logs.append(f'    print(f"{f_string_content}") ')
             else:
                 self.logs.append(f'print(f"{f_string_content}")')
- 
+        
         elif isinstance(expr, ArrayRead):
             array_ref = expr.array
             array_idx = unwrap_operand(expr.idx)
@@ -409,6 +438,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         # Condition 3: If the module pops from any FIFOs, those FIFOs must be valid.
         ports_being_popped = set()
         for key, exposes in self._exposes.items():
+            
             if isinstance(key, Port) and any(isinstance(e, FIFOPop) for e, p in exposes):
                 ports_being_popped.add(key)
         
@@ -494,7 +524,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
                 self.append_code(f'self.{rval}_trigger = executed_wire & ({final_ce}) & self.{rval}_trigger_counter_delta_ready')
 
-            elif isinstance(key, Expr):
+            # elif isinstance(key, Expr)  :
+            else:
                 expr, pred = exposes[0]
                 rval = dump_rval(expr, False)
                 exposed_name = dump_rval(expr, True)
@@ -510,88 +541,97 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.append_code(f'self.valid_{exposed_name} = executed_wire')
 
         self.append_code('self.executed = executed_wire')
-         
+    
     def visit_module(self, node: Module):
+        # STAGE 1: ANALYSIS & BODY GENERATION
+        # Generate the 'construct' method body into a temporary buffer to discover
+        # all necessary ports before writing the final class definition.
+
+        original_code_buffer = self.code
+        original_indent = self.indent
+
+        self.code = []
+        self.indent = original_indent + 8
+        
         self.wait_until = None
         self._exposes = {}
         self.cond_stack = []
         self.current_module = node
         self.exposed_ports_to_add = []
+
+        self.visit_block(node.body)
+        self.cleanup_post_generation()
         
+        construct_method_body = self.code
+        
+        self.code = original_code_buffer
+        self.indent = original_indent
+        self.current_module = node
+ 
         is_async_callee = node in self.async_callees
         is_driver = node not in self.async_callees
         
         self.append_code(f'class {namify(node.name)}(Module):')
         self.indent += 4
+        
         self.append_code('clk = Clock()')
         self.append_code('rst = Reset()')
         self.append_code('executed = Output(Bits(1))')
-
         self.append_code('cycle_count = Input(UInt(64))')
         if is_driver or node in self.async_callees:
             self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
 
-        # Add standard channel INPUT ports (e.g., 'a', 'b', 'v')
         for i in node.ports:
             name = namify(i.name)
             self.append_code(f'{name} = Input({dump_type(i.dtype)})')
             self.append_code(f'{name}_valid = Input(Bits(1))')
-            # Add 'pop_ready' OUTPUT only if .pop() is actually used on this port
-            has_pop = any(isinstance(e, FIFOPop) and e.fifo == i
-                          for e in self._walk_expressions(node.body))
+            has_pop = any(isinstance(e, FIFOPop) and e.fifo == i for e in self._walk_expressions(node.body))
             if has_pop:
                 self.append_code(f'{name}_pop_ready = Output(Bits(1))')
-
+ 
         pushes = [e for e in self._walk_expressions(node.body) if isinstance(e, FIFOPush)]
         calls = [e for e in self._walk_expressions(node.body) if isinstance(e, AsyncCall)]
-
-        # 3a. 为它需要交互的下游模块，添加 INPUT 握手端口
-        for p in pushes:
-            port_name = f'fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready'
-            self.append_code(f'{port_name} = Input(Bits(1))')
-        for c in calls:
-            port_name = f'{namify(c.bind.callee.name)}_trigger_counter_delta_ready'
-            self.append_code(f'{port_name} = Input(Bits(1))')
-
-        # 3b. 为它自己发出的 push 和 call 操作，添加 OUTPUT 端口
-        for p in pushes:
-            # 关键：端口名直接从 push 操作的 fifo 端口名获取
-            self.append_code(f'{namify(p.fifo.name)}_push_valid = Output(Bits(1))')
-            self.append_code(f'{namify(p.fifo.name)}_push_data = Output({dump_type(p.val.dtype)})')
-        for c in calls:
-            self.append_code(f'{namify(c.bind.callee.name)}_trigger = Output(Bits(1))')
         
-        # Add array ports
+        unique_push_handshake_targets = {(p.fifo.module, p.fifo.name) for p in pushes}
+        unique_call_handshake_targets = {c.bind.callee for c in calls}
+        unique_output_push_ports = {p.fifo for p in pushes}
+
+        for module, fifo_name in unique_push_handshake_targets:
+            port_name = f'fifo_{namify(module.name)}_{namify(fifo_name)}_push_ready'
+            self.append_code(f'{port_name} = Input(Bits(1))')
+        for callee in unique_call_handshake_targets:
+            port_name = f'{namify(callee.name)}_trigger_counter_delta_ready'
+            self.append_code(f'{port_name} = Input(Bits(1))')
+
+        for fifo_port in unique_output_push_ports:
+            self.append_code(f'{namify(fifo_port.name)}_push_valid = Output(Bits(1))')
+            dtype = [p.val.dtype for p in pushes if p.fifo == fifo_port][0]
+            self.append_code(f'{namify(fifo_port.name)}_push_data = Output({dump_type(dtype)})')
+        for callee in unique_call_handshake_targets:
+            self.append_code(f'{namify(callee.name)}_trigger = Output(Bits(1))')
+    
         for arr in self.sys.arrays:
-            # CHECK: Only add array ports if the current module uses the array
             if node in self.array_users.get(arr, []):
                 self.append_code(f'{namify(arr.name)}_payload = Input(Array({dump_type(arr.scalar_ty)}, {arr.size}))')
- 
-                is_writer = any(isinstance(e, ArrayWrite) and e.array == arr
-                                for e in self._walk_expressions(node.body))
-
+                is_writer = any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(node.body))
                 if is_writer:
                     self.append_code(f'{namify(arr.name)}_ce = Output(Bits(1))')
                     self.append_code(f'{namify(arr.name)}_wdata = Output(Bits({arr.scalar_ty.bits}))')
                     if arr.index_bits > 0:
                         self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(arr.index_type())})')
  
+        for port_code in self.exposed_ports_to_add:
+            self.append_code(port_code)
+ 
         self.append_code('')
         self.append_code('@generator')
         self.append_code('def construct(self):')
-        self.indent += 4
-        self.visit_block(node.body)
-        self.cleanup_post_generation()
-        self.indent -= 4
-        self.append_code('')
         
-        # Write the collected Output port declarations here
-        for port_code in self.exposed_ports_to_add:
-            self.append_code(port_code)
+        self.code.extend(construct_method_body)
+        
+        self.indent -= 4
+        self.append_code('') 
 
-        self.indent -= 4
-        self.append_code('')
-        
     def _walk_expressions(self, block: Block):
         """Recursively walks a block and yields all expressions."""
         for item in block.body:
@@ -604,13 +644,14 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.sys = sys
         # Analysis pass
         for module in sys.modules:
-            # Use the new helper method to walk the IR
             for expr in self._walk_expressions(module.body):
                 if isinstance(expr, AsyncCall):
                     callee = expr.bind.callee
                     if callee not in self.async_callees:
                         self.async_callees[callee] = []
-                    self.async_callees[callee].append(module)
+                     
+                    if module not in self.async_callees[callee]:
+                        self.async_callees[callee].append(module)
 
         self.array_users = {}
         for arr in self.sys.arrays:
@@ -742,18 +783,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if module in users:
                     port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
             
-            # --- KEY FIX STARTS HERE ---
-            # Analyze module body to connect required handshake INPUTS
             pushes = [e for e in self._walk_expressions(module.body) if isinstance(e, FIFOPush)]
             calls = [e for e in self._walk_expressions(module.body) if isinstance(e, AsyncCall)]
-            for p in pushes:
-                # Add 'fifo_Callee_port_push_ready=fifo_Callee_port_push_ready' to the port map
-                port_map.append(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready=fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_ready")
-            for c in calls:
-                # Add 'Callee_trigger_counter_delta_ready=Callee_trigger_counter_delta_ready'
-                port_map.append(f"{namify(c.bind.callee.name)}_trigger_counter_delta_ready={namify(c.bind.callee.name)}_trigger_counter_delta_ready")
-            # --- KEY FIX ENDS HERE ---
-
+             
+            unique_push_targets = {(p.fifo.module, p.fifo) for p in pushes}
+            unique_call_targets = {c.bind.callee for c in calls}
+ 
+            for (callee_mod, callee_port) in unique_push_targets:
+                port_map.append(f"fifo_{namify(callee_mod.name)}_{namify(callee_port.name)}_push_ready=fifo_{namify(callee_mod.name)}_{namify(callee_port.name)}_push_ready")
+            
+            for callee_mod in unique_call_targets:
+                port_map.append(f"{namify(callee_mod.name)}_trigger_counter_delta_ready={namify(callee_mod.name)}_trigger_counter_delta_ready")
+            
             # Connect input data channels (if it's a callee)
             if module in self.async_callees:
                 for port in module.ports:
@@ -775,11 +816,12 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     self.append_code(f"fifo_{mod_name}_{namify(port.name)}_pop_ready.assign(inst_{mod_name}.{namify(port.name)}_pop_ready)")
 
             # Connect data channel push outputs
-            for p in pushes:
-                # fifo_Sub_a_push_valid.assign(inst_Lhs.a_push_valid)
-                self.append_code(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_valid.assign(inst_{mod_name}.{namify(p.fifo.name)}_push_valid)")
-                self.append_code(f"fifo_{namify(p.fifo.module.name)}_{namify(p.fifo.name)}_push_data.assign(inst_{mod_name}.{namify(p.fifo.name)}_push_data.as_bits())")
- 
+            for (callee_mod, callee_port) in unique_push_targets:
+                callee_mod_name = namify(callee_mod.name)
+                callee_port_name = namify(callee_port.name) 
+                self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_valid.assign(inst_{mod_name}.{callee_port_name}_push_valid)")
+                self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_data.assign(inst_{mod_name}.{callee_port_name}_push_data.as_bits())")
+        
         # --- 4. Array Write-Back Connections (Generic) ---
         self.append_code('\n# --- Array Write-Back Connections ---')
         for arr, users in self.array_users.items():
@@ -807,19 +849,27 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.append_code(f"reg_{arr_name}.assign({array_init[arr_name]})")
                 if arr.index_bits > 0:
                     self.append_code(f"{arr_name}_widx.assign(Bits({arr.index_bits})(0))")
-        # --- 5. Trigger Counter Delta Connections (Generic) ---
+        # --- 5. Trigger Counter Delta Connections  ---
         self.append_code('\n# --- Trigger Counter Delta Connections ---')
         for module in self.sys.modules:
             mod_name = namify(module.name)
             
-            if module in self.async_callees:  # Module is a "callee"
+            if module in self.async_callees:  
                 callers_of_this_module = self.async_callees[module]
-                trigger_signals = [f"inst_{namify(c.name)}.{mod_name}_trigger" for c in callers_of_this_module]
-                summed_triggers = f"({' + '.join(trigger_signals)})" if len(trigger_signals) > 1 else trigger_signals[0]
+                 
+                trigger_terms = [
+                    f"inst_{namify(c.name)}.{mod_name}_trigger.as_uint()"
+                    for c in callers_of_this_module
+                ] 
+                if len(trigger_terms) > 1:
+                    summed_triggers = f"({' + '.join(trigger_terms)})"
+                else:
+                    summed_triggers = trigger_terms[0]
+                 
                 self.append_code(f"{mod_name}_trigger_counter_delta.assign({summed_triggers}.as_bits(8))")
-            else:  # Module is a "root" (never called)
+            else:   
                 self.append_code(f"{mod_name}_trigger_counter_delta.assign(Bits(8)(1))")
-    
+
         self.indent -= 8
         self.append_code('')
         self.append_code(f'system = System([Top], name="Top", output_directory="sv")')
