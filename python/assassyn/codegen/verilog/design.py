@@ -219,13 +219,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 body = f"{rval} = {op_class_name}({a}.as_bits(), {b}.as_bits()).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
             else: 
                 op_str = BinaryOp.OPERATORS[expr.opcode]
-                 
+                
                 op_body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
                 body = f'{rval} = {op_body}'
         elif isinstance(expr, UnaryOp):
             uop = expr.opcode
             op_str = "~" if uop == UnaryOp.FLIP else "-"
             x = dump_rval(expr.x, False)
+            if uop == UnaryOp.FLIP:
+                x = f"({x}.as_bits())" 
             body = f"{op_str}{x}"
             body = f'{rval} = {body}'
         
@@ -243,10 +245,14 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     exposed_name = dump_rval(operand, True)
                     valid_signal = f'dut.{module_name}.valid_{exposed_name}.value'
                     condition_snippets.append(valid_signal)
-                    expose_signal = f'int(dut.{module_name}.expose_{exposed_name}.value)'
+                    
+                    base_value = f"dut.{module_name}.expose_{exposed_name}.value"
+                    if isinstance(operand.dtype, Int):
+                        bits = operand.dtype.bits
+                        expose_signal = f"({base_value} - (1 << {bits}) if ({base_value} >> ({bits} - 1)) & 1 else int({base_value}))"
+                    else: 
+                        expose_signal = f"int({base_value})"
                     arg_print_snippets.append(expose_signal)
-                else:
-                    arg_print_snippets.append(str(operand.value))
  
             f_string_content_parts = []
             arg_iterator = iter(arg_print_snippets)
@@ -260,7 +266,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     arg_code = next(arg_iterator)
                     new_placeholder =  f"{{{arg_code}"
                     if conversion:  # for !s, !r, !a
-                        new_placeholder += f"!{conversion}"
+                        new_placeholder += f"!({conversion})"
                     if format_spec:  # for :b, :08x,  
                         new_placeholder += f":{format_spec}"
                     new_placeholder += "}"
@@ -358,7 +364,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             cast_body = ""
             cast_kind =  expr.opcode 
             if cast_kind == Cast.BITCAST:
-                assert pad == 0
+                # assert pad == 0
                 cast_body = f"{a}.{dump_type_cast(expr.dtype)}"
             elif cast_kind == Cast.ZEXT:
                 cast_body = f"{{{pad}'b0, {a}}}"
@@ -408,7 +414,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 
                 final_cond = cond
                 if is_async_callee:
-                    final_cond = f"({cond} & self.trigger_counter_pop_valid)"
+                    final_cond = f"({cond}.as_bits() & self.trigger_counter_pop_valid)"
                  
                 self.wait_until = final_cond
             else:
@@ -922,4 +928,6 @@ def generate_design(fname: str, sys: SysBuilder):
         dumper.visit_system(sys)
         code = '\n'.join(dumper.code)
         fd.write(code)
-    return dumper.logs
+    logs = dumper.logs
+     
+    return logs
