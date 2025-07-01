@@ -299,11 +299,23 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             if_condition = " and ".join(final_conditions)
 
             self.logs.append(f'# {expr}')
+
+            line_info = f"@line:{expr.loc.rsplit(':', 1)[-1]}"   
+ 
+            module_info = f"[{namify(self.current_module.name)}]"
+ 
+            cycle_info = f"Cycle @{{float(dut.global_cycle_count.value):.2f}}:"
+ 
+            final_print_string = (
+                 f'f"{line_info} {cycle_info} {module_info:<20} {f_string_content}"'
+             )
+
+            self.logs.append(f'#@ line {expr.loc}: {expr}')
             if if_condition:
-                self.logs.append(f'if ( {if_condition} ):')
-                self.logs.append(f'    print(f"{f_string_content}") ')
+                self.logs.append(f'if ( {if_condition} ):') 
+                self.logs.append(f'    print({final_print_string})')
             else:
-                self.logs.append(f'print(f"{f_string_content}")')
+                self.logs.append(f'print({final_print_string})')
         
         elif isinstance(expr, ArrayRead):
             array_ref = expr.array
@@ -431,25 +443,24 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     def cleanup_post_generation(self):
         self.append_code('')
         exec_conditions = []
-        is_driver = self.current_module not in self.async_callees
+        # is_driver = self.current_module not in self.async_callees
         
         # Condition 1: The module's own trigger counter must be valid.
-        if is_driver or self.current_module in self.async_callees:
-            exec_conditions.append("self.trigger_counter_pop_valid")
+        exec_conditions.append("self.trigger_counter_pop_valid")
             
         # Condition 2: Any 'wait_until' condition must be met.
         if self.wait_until:
             exec_conditions.append(f"({self.wait_until})")
 
         # Condition 3: If the module pops from any FIFOs, those FIFOs must be valid.
-        ports_being_popped = set()
-        for key, exposes in self._exposes.items():
+        # ports_being_popped = set()
+        # for key, exposes in self._exposes.items():
             
-            if isinstance(key, Port) and any(isinstance(e, FIFOPop) for e, p in exposes):
-                ports_being_popped.add(key)
+        #     if isinstance(key, Port) and any(isinstance(e, FIFOPop) for e, p in exposes):
+        #         ports_being_popped.add(key)
         
-        for port in ports_being_popped:
-            exec_conditions.append(f"self.{namify(port.name)}_valid")
+        # for port in ports_being_popped:
+        #     exec_conditions.append(f"self.{namify(port.name)}_valid")
 
         # --- Generate the final executed_wire ---
         if not exec_conditions:
@@ -489,14 +500,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 has_push = any(isinstance(e, FIFOPush) for e, p in exposes)
                 has_pop = any(isinstance(e, FIFOPop) for e, p in exposes)
 
-                if has_push:
-                    # This is the existing, correct logic for FIFOPush
+                if has_push: 
                     fifo = dump_rval(key, False)
                     push_valid_terms = [p for e, p in exposes if isinstance(e, FIFOPush)]
                     push_exprs = [e for e, p in exposes if isinstance(e, FIFOPush)]
                     
+                    self.append_code(f'# {push_exprs[0]}')
+                    ready_signal = f"self.fifo_{namify(key.module.name)}_{fifo}_push_ready"
+                   
                     if len(push_exprs) == 1:
                         final_push_data = dump_rval(push_exprs[0].val, False)
+                        self.append_code(f'self.{fifo}_push_valid = executed_wire  & {ready_signal}')
+                    
                     else:
                         push_data_terms_mux = [f"{dump_type(key.dtype)}(0)"]
                         for expr, pred in exposes:
@@ -504,12 +519,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                             rval = dump_rval(expr.val, False)
                             push_data_terms_mux.insert(0, f"Mux({pred}, {push_data_terms_mux[0]}, {rval})")
                         final_push_data = push_data_terms_mux[0]
-                    ready_signal = f"self.fifo_{namify(key.module.name)}_{fifo}_push_ready"
-                   
-                    final_push_valid = " | ".join(push_valid_terms) if push_valid_terms else "Bits(1)(0)"
-
-                    self.append_code(f'# {push_exprs[0]}')
-                    self.append_code(f'self.{fifo}_push_valid = executed_wire & ({final_push_valid}) & {ready_signal}')
+                    
+                        final_push_valid = " | ".join(push_valid_terms) if push_valid_terms else "Bits(1)(0)"
+                        self.append_code(f'self.{fifo}_push_valid = executed_wire  & {ready_signal}')
+                     
                     self.append_code(f'self.{fifo}_push_data = {final_push_data}')
 
                 if has_pop: 
@@ -648,7 +661,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
 
     def visit_system(self, sys: SysBuilder):
         self.sys = sys
-        # Analysis pass
+         
         for module in sys.modules:
             for expr in self._walk_expressions(module.body):
                 if isinstance(expr, AsyncCall):
@@ -813,7 +826,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
 
             # --- Connect the module's OUTPUTS back to wires ---
             
-            # Connect main 'executed' output
+            # Connect main 'executed' output 
             self.append_code(f"{mod_name}_trigger_counter_pop_ready.assign(inst_{mod_name}.executed)")
             
             # Connect data channel pop_ready outputs
