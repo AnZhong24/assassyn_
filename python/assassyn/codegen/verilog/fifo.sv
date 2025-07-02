@@ -66,6 +66,9 @@ generate
         // The number of elements in the queue after this cycle.
         assign new_count = count + (push_valid ? 1 : 0) - (pop_ready ? 1 : 0);
 
+        assign pop_data = pop_valid ? (new_count == 0 && push_valid ? push_data : q[front]) : 'x;
+                
+
         // The new front of the queue after this cycle.
         assign new_front = front + (pop_ready && (count != 0 || push_valid) ? 1 : 0);
 
@@ -74,7 +77,7 @@ generate
                 front <= 0;
                 back <= 0;
                 pop_valid <= 1'b0;
-                pop_data <= 'x;
+                //pop_data <= 'x;
                 count <= 0;
                 push_ready <= 1'b1;
             end else begin
@@ -83,7 +86,8 @@ generate
                     q[back] <= push_data;
                     back <= (back + 1);
                 end
-
+               
+                
                 front <= new_front;
                 count <= new_count;
 
@@ -100,8 +104,7 @@ generate
     // pushed data is also the front of the FIFO. Instead of reading it from
     // the array buffer, we directly forward the push_data to pop_data.
                 //pop_data <= temp_pop_valid ? (new_count == 0 && push_valid ? push_data : q[front]) : 'x;
-                pop_data <=  new_count == 0 && push_valid ? push_data : q[front] ;
-
+                
 
             end
         end
