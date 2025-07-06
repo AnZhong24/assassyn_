@@ -22,14 +22,14 @@ async def test_tb(dut):
     await Timer(500, units="ns")
     dut.clk.value = 0
     dut.rst.value = 0
-
+    await Timer(500, units="ns")
     for cycle in range({}):
-        await Timer(500, units="ns")
+        
         dut.clk.value = 1
        
         await Timer(500, units="ns")
         dut.clk.value = 0
-
+        await Timer(500, units="ns")
         {}
 
 
