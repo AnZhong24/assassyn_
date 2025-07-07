@@ -10,7 +10,7 @@ from ...ir.visitor import Visitor
 from ...ir.block import Block, CondBlock,CycledBlock
 from ...ir.const import Const
 from ...ir.array import Array
-from ...ir.dtype import Int, UInt, Bits, DType
+from ...ir.dtype import Int, UInt, Bits, DType, Record,RecordValue
 from ...utils import namify, unwrap_operand
 from ...ir.expr import (
     Expr,
@@ -29,10 +29,10 @@ from ...ir.expr import (
     Select,
     Bind,
     Select1Hot,
-    Intrinsic
+    Intrinsic 
 )
 
-def dump_rval(node, with_namespace: bool) -> str:  # pylint: disable=too-many-return-statements
+def dump_rval(node, with_namespace: bool,module_name:str=None) -> str:  # pylint: disable=too-many-return-statements
     """Dump a reference to a node with options."""
 
     node = unwrap_operand(node)
@@ -60,20 +60,33 @@ def dump_rval(node, with_namespace: bool) -> str:  # pylint: disable=too-many-re
         raw = namify(node.as_operand())
         if with_namespace:
             owner_module_name = namify(node.parent.module.name)
+            if owner_module_name==None:
+                owner_module_name = module_name
             return f"{owner_module_name}_{raw}"
-  
-
         return raw
+    if isinstance(node, RecordValue):
+        record_type = node._dtype
+        record_type_str = dump_type(record_type)
+ 
+        return f"{record_type_str}"
+
     raise ValueError(f"Unknown node of kind {type(node).__name__}")
 
 def dump_type(ty: DType) -> str:
     """Dump a type to a string."""
+    
     if isinstance(ty, Int):
         return f"SInt({ty.bits})"
     if isinstance(ty, UInt):
         return f"UInt({ty.bits})"
     if isinstance(ty, Bits):
         return f"Bits({ty.bits})"
+    if isinstance(ty, Record): 
+        fields = [f"'{name}': {dump_type(dtype)}" for _, (name, dtype) in ty.fields.items()]
+        return f"Struct({{{', '.join(fields)}}})"
+    if isinstance(ty, slice):
+        width = ty.stop - ty.start + 1
+        return f"Bits({width})"
     raise ValueError(f"Unknown type: {type(ty)}")
 
 def dump_type_cast(ty: DType) -> str:
@@ -198,9 +211,17 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             dtype = expr.dtype
             if binop in [BinaryOp.SHL, BinaryOp.SHR] or 'SHR' in str(binop):
                 
-                a = f"{a}.as_bits()"
-                b = f"{b}.as_bits()"
+                lhs_type = expr.lhs.dtype
+                rhs_type = expr.rhs.dtype
+                
+                target_type_str = dump_type(lhs_type)
+                 
+                if lhs_type.bits != rhs_type.bits:
+                    b = f"BitsSignal.concat([Bits({lhs_type.bits - rhs_type.bits})(0), {b}.as_bits()])"
  
+                b = f"{b}.as_bits()"
+                a = f"{a}.as_bits()"
+
                 op_class_name = None
                 if binop == BinaryOp.SHL:
                     op_class_name = "comb.ShlOp"
@@ -224,7 +245,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 body = f"{rval} = {op_class_name}({a}.as_bits(), {b}.as_bits()).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
             else: 
                 op_str = BinaryOp.OPERATORS[expr.opcode]
-                
+                if op_str == "&":
+                    if expr.rhs.dtype != Bits:
+                        b=f"{b}.as_bits()"
                 op_body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
                 body = f'{rval} = {op_body}'
         elif isinstance(expr, UnaryOp):
@@ -247,7 +270,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 operand = unwrap_operand(i)
                 if not isinstance(operand, Const):
                     self.expose('expr', operand)
-                    exposed_name = dump_rval(operand, True)
+                    exposed_name = dump_rval(operand, True) 
                     valid_signal = f'dut.{module_name}.valid_{exposed_name}.value'
                     condition_snippets.append(valid_signal)
                     
@@ -268,10 +291,13 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     f_string_content_parts.append(literal_text)
  
                 if field_name is not None: 
+                    if format_spec == '?':
+                        conversion = 'r'   
+                        format_spec = None 
                     arg_code = next(arg_iterator)
                     new_placeholder =  f"{{{arg_code}"
                     if conversion:  # for !s, !r, !a
-                        new_placeholder += f"!({conversion})"
+                        new_placeholder += f"!{conversion}"
                     if format_spec:  # for :b, :08x,  
                         new_placeholder += f":{format_spec}"
                     new_placeholder += "}"
@@ -290,7 +316,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     final_conditions.append(tb_cond_path)
                  
                 elif isinstance(cond_obj, CondBlock):  
-                    exposed_name = dump_rval(cond_obj.cond, False)
+                    exposed_name = dump_rval(cond_obj.cond, True)
                     
                     tb_expose_path = f"(dut.{module_name}.expose_{exposed_name}.value)"
                     tb_valid_path = f"(dut.{module_name}.valid_{exposed_name}.value)"
@@ -363,9 +389,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, AsyncCall):
             self.expose('trigger', expr)
         elif isinstance(expr, Slice):
-            a = dump_rval(expr.x, False)
-            l = expr.l.value.value
-            r = expr.r.value.value
+            a_var = expr.x
+            a = dump_rval(a_var, False)
+            if isinstance(a_var,Record):
+                field_index = expr.l.value.value 
+                field_name = list(a_var.dtype.fields.keys())[field_index]
+                body = f"{rval} = {a}.{field_name}"
+            else:
+                l = expr.l.value.value
+                r = expr.r.value.value
             body = f"{rval} = {a}.as_bits()[{l}:{r+1}]"
         elif isinstance(expr, Concat):
             a = dump_rval(expr.msb, False)
@@ -416,24 +448,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             else:
                 final_expr = " | ".join(gated_terms)
                 body = f"{rval} = {final_expr}"
-            # value_type = dump_type(expr.values[0].dtype)
-            # zero_value = f"{value_type}(0)"
-  
-            # for i, value_name in enumerate(values): 
-            #     gated_term_name = f"{rval}_gated_{i}"
-            #     if i == 0: 
-            #         mux_code = (
-            #             f"{gated_term_name} = Mux({cond}.as_bits()[{i}], {zero_value}, {value_name})"
-            #         )
-            #     else :
-            #         mux_code = (
-            #             f"{gated_term_name} = Mux({cond}.as_bits()[{i}], {last_gated_term_name}, {value_name})"
-            #         )
-                
-            #     last_gated_term_name = gated_term_name
-            #     self.append_code(mux_code)
-                 
-            # body = f"{rval} = {last_gated_term_name} "
+           
         elif isinstance(expr, Intrinsic):
             intrinsic = expr.opcode
             if intrinsic == Intrinsic.FINISH:
@@ -623,7 +638,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.append_code('trigger_counter_pop_valid = Input(Bits(1))')
 
         for i in node.ports:
-            name = namify(i.name)
+            name = namify(i.name) 
             self.append_code(f'{name} = Input({dump_type(i.dtype)})')
             self.append_code(f'{name}_valid = Input(Bits(1))')
             has_pop = any(isinstance(e, FIFOPop) and e.fifo == i for e in self._walk_expressions(node.body))
@@ -914,8 +929,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                         true_val = f"inst_{writer_mod_name}.{arr_name}_widx"
                         widx_mux = f"Mux({cond},  {widx_mux},{true_val})"
                     self.append_code(f"{arr_name}_widx.assign({widx_mux})")
-
-            # Final assignment to the register's input port
+ 
             if writers:
                 self.append_code(f"reg_{arr_name}.assign([{arr_name}_wdata.{dump_type_cast(arr.scalar_ty)}])")
             else:
@@ -945,8 +959,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('')
         self.append_code(f'system = System([Top], name="Top", output_directory="sv")')
         self.append_code('system.compile()')
-
-# The HEADER constant. NOTE the updated TriggerCounter definition.
+ 
 HEADER = '''from pycde import Input, Output, Module, System, Clock, Reset
 from pycde import generator, modparams
 from pycde.constructs import Reg, Array, Mux,Wire
