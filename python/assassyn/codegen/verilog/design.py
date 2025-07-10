@@ -453,8 +453,20 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             intrinsic = expr.opcode
             if intrinsic == Intrinsic.FINISH:
                 pred = self.get_pred() or "1"
-                body = (f"\n`ifndef SYNTHESIS\n  always_ff @(posedge clk) "
-                        f"if (self.executed && {pred}) $finish();\n`endif\n")
+                # body = (f"\n`ifndef SYNTHESIS\n  always_ff @(posedge clk) "
+                #         f"if (self.executed && {pred}) $finish();\n`endif\n")
+                verilog_string = f'''
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (self.executed && {{0}}) $finish;
+`endif
+'''
+                # Get the pycde signal for the predicate
+                # pred_signal = self.code_buffer.get_signal(pred)
+
+                # Use sv.VerbatimOp to insert the raw verilog
+                
+                body = f"sv.VerbatimOp({verilog_string} )"
             elif intrinsic == Intrinsic.ASSERT:
                 self.expose('expr', expr.args[0])
             elif intrinsic == Intrinsic.WAIT_UNTIL:
@@ -466,6 +478,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     final_cond = f"({cond}.as_bits() & self.trigger_counter_pop_valid)"
                  
                 self.wait_until = final_cond
+            elif intrinsic == Intrinsic.BARRIER: 
+                body = None
             else:
                 raise ValueError(f"Unknown block intrinsic: {expr}")
         else:
@@ -479,27 +493,12 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     
     def cleanup_post_generation(self):
         self.append_code('')
-        exec_conditions = []
-        # is_driver = self.current_module not in self.async_callees
-        
-        # Condition 1: The module's own trigger counter must be valid.
+        exec_conditions = [] 
         exec_conditions.append("self.trigger_counter_pop_valid")
-            
-        # Condition 2: Any 'wait_until' condition must be met.
+             
         if self.wait_until:
             exec_conditions.append(f"({self.wait_until})")
-
-        # Condition 3: If the module pops from any FIFOs, those FIFOs must be valid.
-        # ports_being_popped = set()
-        # for key, exposes in self._exposes.items():
-            
-        #     if isinstance(key, Port) and any(isinstance(e, FIFOPop) for e, p in exposes):
-        #         ports_being_popped.add(key)
-        
-        # for port in ports_being_popped:
-        #     exec_conditions.append(f"self.{namify(port.name)}_valid")
-
-        # --- Generate the final executed_wire ---
+ 
         if not exec_conditions:
             self.append_code('executed_wire = Bits(1)(1)')
         else:
@@ -550,7 +549,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                         for expr, pred in pushes:
                             rval = dump_rval(expr.val, False)
                              
-                            mux_data = f"Mux({pred}, {rval}, {mux_data})"
+                            mux_data = f"Mux({pred}, {mux_data}, {rval})"
                         final_push_data = mux_data
  
                     self.append_code(f'# Push logic for port: {fifo}')
@@ -561,21 +560,47 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     
                 if has_pop: 
                     fifo = dump_rval(key, False)
-                    pop_expr = [e for e, p in exposes if isinstance(e, FIFOPop)][0]
-                     
+
+                    pop_expr = [e for e, p in exposes if isinstance(e, FIFOPop)][0] 
                     self.append_code(f'# {pop_expr}')
-                    self.append_code(f'self.{fifo}_pop_ready = executed_wire')
+                    pop_predicates = [pred for expr, pred in exposes if isinstance(expr, FIFOPop)]
+                    print(pop_predicates)
+                    if pop_predicates:
+                        final_pop_condition = " | ".join([f"({p})" for p in pop_predicates])
+                    else: 
+                        final_pop_condition = "Bits(1)(0)"
+                    self.append_code(f'self.{fifo}_pop_ready = executed_wire & ({final_pop_condition})')
                     
                     
-            elif isinstance(key, Module): # This is for AsyncCall triggers
+            elif isinstance(key, Module):  
                 rval = dump_rval(key, False)
-                ce_terms = []
-                for expr, pred in exposes:
-                    self.append_code(f'# {expr}')
-                    ce_terms.append(pred)
+ 
+                call_predicates = [pred for expr, pred in exposes if isinstance(expr, AsyncCall)]
+
+                if not call_predicates: 
+                    self.append_code(f'self.{rval}_trigger = UInt(8)(0)')
+                    continue
+
+                self.append_code(f'# Summing triggers for {rval}')
+ 
+                add_terms = [f"Mux({pred}, UInt(8)(0), UInt(8)(1))" for pred in call_predicates]
+ 
+                if len(add_terms) == 1:
+                    sum_expression = add_terms[0]
+                else:
+                    sum_expression = f"({' + '.join(add_terms)})"
+ 
+                resized_sum = f"(({sum_expression}).as_bits()[0:8].as_uint())"
+                final_trigger_value = f"Mux(executed_wire, UInt(8)(0), {resized_sum})"
+                self.append_code(f'self.{rval}_trigger = {final_trigger_value}') 
+
+                # ce_terms = []
+                # for expr, pred in exposes:
+                #     self.append_code(f'# {expr}')
+                #     ce_terms.append(pred)
                 
-                final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
-                self.append_code(f'self.{rval}_trigger = executed_wire & ({final_ce}) & self.{rval}_trigger_counter_delta_ready')
+                # final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
+                # self.append_code(f'self.{rval}_trigger = executed_wire & ({final_ce}) & self.{rval}_trigger_counter_delta_ready')
 
             # elif isinstance(key, Expr)  :
             else:
@@ -661,10 +686,13 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
 
         for fifo_port in unique_output_push_ports: 
             self.append_code(f'{namify(fifo_port.module.name)}_{namify(fifo_port.name)}_push_valid = Output(Bits(1))')
-            dtype = [p.val.dtype for p in pushes if p.fifo == fifo_port][0]
+            print(fifo_port)
+            dtype = fifo_port.dtype
+            print(dtype)
+            # dtype = [p.val.dtype for p in pushes if p.fifo == fifo_port][0]
             self.append_code(f'{namify(fifo_port.module.name)}_{namify(fifo_port.name)}_push_data = Output({dump_type(dtype)})')
         for callee in unique_call_handshake_targets:
-            self.append_code(f'{namify(callee.name)}_trigger = Output(Bits(1))')
+            self.append_code(f'{namify(callee.name)}_trigger = Output(UInt(8))')
     
         for arr in self.sys.arrays:
             if node in self.array_users.get(arr, []):
@@ -855,9 +883,13 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             if module in self.async_callees:
                 for port in module.ports:
                     fifo_base_name = f'fifo_{mod_name}_{namify(port.name)}'
-                    port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data.{dump_type_cast(port.dtype)}")
+                    if isinstance(port.dtype, Record): 
+                        struct_type = dump_type(port.dtype)
+                        port_map.append(f"{namify(port.name)}={struct_type}({fifo_base_name}_pop_data)")
+                    else:
+                        port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data.{dump_type_cast(port.dtype)}")
                     port_map.append(f"{namify(port.name)}_valid={fifo_base_name}_pop_valid")
-            
+                
             # Instantiate the module with the complete port map
             self.append_code(f"inst_{mod_name} = {mod_name}({', '.join(port_map)})")
 
@@ -931,10 +963,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     self.append_code(f"{arr_name}_widx.assign({widx_mux})")
  
             if writers:
-                self.append_code(f"reg_{arr_name}.assign([{arr_name}_wdata.{dump_type_cast(arr.scalar_ty)}])")
+                if isinstance(arr.scalar_ty, Record): 
+                    struct_type = dump_type(arr.scalar_ty)
+                    assign_val = f"{struct_type}({arr_name}_wdata)"
+                else: 
+                    assign_val = f"{arr_name}_wdata.{dump_type_cast(arr.scalar_ty)}"
+                self.append_code(f"reg_{arr_name}.assign([{assign_val}])") 
             else:
                 self.append_code(f"reg_{arr_name}.assign({array_init[arr_name]})")
-        # --- 5. Trigger Counter Delta Connections  ---
+       
         self.append_code('\n# --- Trigger Counter Delta Connections ---')
         for module in self.sys.modules:
             mod_name = namify(module.name)
@@ -943,7 +980,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 callers_of_this_module = self.async_callees[module]
                  
                 trigger_terms = [
-                    f"inst_{namify(c.name)}.{mod_name}_trigger.as_uint()"
+                    f"inst_{namify(c.name)}.{mod_name}_trigger"
                     for c in callers_of_this_module
                 ] 
                 if len(trigger_terms) > 1:
@@ -965,7 +1002,7 @@ from pycde import generator, modparams
 from pycde.constructs import Reg, Array, Mux,Wire
 from pycde.types import Bits, SInt, UInt
 from pycde.signals import Struct, BitsSignal
-from pycde.dialects import comb
+from pycde.dialects import comb,sv
 
 @modparams
 def FIFO(WIDTH: int, DEPTH_LOG2: int):
