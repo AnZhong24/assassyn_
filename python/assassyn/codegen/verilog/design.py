@@ -451,22 +451,22 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
            
         elif isinstance(expr, Intrinsic):
             intrinsic = expr.opcode
-            if intrinsic == Intrinsic.FINISH:
-                pred = self.get_pred() or "1"
-                # body = (f"\n`ifndef SYNTHESIS\n  always_ff @(posedge clk) "
-                #         f"if (self.executed && {pred}) $finish();\n`endif\n")
-                verilog_string = f'''
+            if intrinsic == Intrinsic.FINISH: 
+                predicate_signal = self.get_pred()
+               
+                verilog_template = """
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
-    if (self.executed && {{0}}) $finish;
+    // Finish if the execution path is active AND the specific finish condition is met.
+    if ({{0}} & {{1}}) $finish;
 `endif
-'''
-                # Get the pycde signal for the predicate
-                # pred_signal = self.code_buffer.get_signal(pred)
-
-                # Use sv.VerbatimOp to insert the raw verilog
-                
-                body = f"sv.VerbatimOp({verilog_string} )"
+"""
+                # Generate the sv.VerbatimOp call.
+                # !r ensures the multi-line string is correctly represented in the output python code.
+                # .value is used to pass the signal's value to the substitution mechanism.
+                body = (f"sv.VerbatimOp({verilog_template!r}, "
+                        f"substitutions=[{predicate_signal}.value, executed_wire.value])")
+               
             elif intrinsic == Intrinsic.ASSERT:
                 self.expose('expr', expr.args[0])
             elif intrinsic == Intrinsic.WAIT_UNTIL:
@@ -493,17 +493,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     
     def cleanup_post_generation(self):
         self.append_code('')
-        exec_conditions = [] 
-        exec_conditions.append("self.trigger_counter_pop_valid")
-             
-        if self.wait_until:
-            exec_conditions.append(f"({self.wait_until})")
- 
-        if not exec_conditions:
-            self.append_code('executed_wire = Bits(1)(1)')
-        else:
-            self.append_code(f"executed_wire = {' & '.join(exec_conditions)}")
-
+        
         for key, exposes in self._exposes.items():
             if isinstance(key, Array):
                 array = dump_rval(key, False)
@@ -525,7 +515,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                         wdata_terms.insert(0, f"Mux({pred}, {wdata_terms[0]}, {data}.as_bits())")
 
                 final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
-                # Use executed_wire
+               
                 self.append_code(f'self.{array}_ce = executed_wire & ({final_ce})')
                 self.append_code(f'self.{array}_wdata = {wdata_terms[0]}')
                 if key.index_bits > 0:
@@ -593,16 +583,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 resized_sum = f"(({sum_expression}).as_bits()[0:8].as_uint())"
                 final_trigger_value = f"Mux(executed_wire, UInt(8)(0), {resized_sum})"
                 self.append_code(f'self.{rval}_trigger = {final_trigger_value}') 
-
-                # ce_terms = []
-                # for expr, pred in exposes:
-                #     self.append_code(f'# {expr}')
-                #     ce_terms.append(pred)
-                
-                # final_ce = " | ".join(ce_terms) if ce_terms else "Bits(1)(0)"
-                # self.append_code(f'self.{rval}_trigger = executed_wire & ({final_ce}) & self.{rval}_trigger_counter_delta_ready')
-
-            # elif isinstance(key, Expr)  :
+ 
             else:
                 expr, pred = exposes[0]
                 rval = dump_rval(expr, False)
@@ -711,6 +692,19 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('@generator')
         self.append_code('def construct(self):')
         
+        self.indent += 4
+        exec_conditions = [] 
+        exec_conditions.append("self.trigger_counter_pop_valid")
+             
+        if self.wait_until:
+            exec_conditions.append(f"({self.wait_until})")
+ 
+        if not exec_conditions:
+            self.append_code('executed_wire = Bits(1)(1)')
+        else:
+            self.append_code(f"executed_wire = {' & '.join(exec_conditions)}")
+
+        self.indent -= 4
         self.code.extend(construct_method_body)
         
         self.indent -= 4
@@ -847,22 +841,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.append_code(f'{tc_base_name}_delta_ready.assign({tc_base_name}_inst.delta_ready)')
             self.append_code(f'{tc_base_name}_pop_valid.assign({tc_base_name}_inst.pop_valid)')
 
-
-        # --- 3. Module Instantiations and Connections (Generic) ---
+ 
         self.append_code('\n# --- Module Instantiations and Connections ---')
         for module in self.sys.modules:
             mod_name = namify(module.name)
             self.append_code(f'# Instantiation for {module.name}')
-            
-            # Build the port map for the module instance
+             
             port_map = [f'clk=self.clk', f'rst=self.rst']
-            
-            # Connect required trigger/cycle ports
+             
             if module in self.async_callees or module not in self.async_callees:
                 port_map.append(f"trigger_counter_pop_valid={mod_name}_trigger_counter_pop_valid")
             port_map.append(f"cycle_count=cycle_count")
-
-            # Connect input payloads from arrays
+ 
             for arr, users in self.array_users.items():
                 if module in users:
                     port_map.append(f"{namify(arr.name)}_payload=reg_{namify(arr.name)}")
@@ -909,8 +899,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 callee_port_name = namify(callee_port.name) 
                 self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_valid.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_valid)")
                 self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_data.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_data.as_bits())")
-        
-        # --- 4. Array Write-Back Connections (Generic) ---
+         
         self.append_code('\n# --- Array Write-Back Connections ---')
         for arr, users in self.array_users.items():
             arr_name = namify(arr.name)
@@ -954,7 +943,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.append_code(f"{arr_name}_wdata.assign({wdata_mux})")
  
                 if arr.index_bits > 0:
-                    widx_mux = f"Bits({arr.index_bits})(0)" # Default value
+                    widx_mux = f"Bits({arr.index_bits})(0)"  
                     for writer in reversed(writers):
                         writer_mod_name = namify(writer.name)
                         cond = f"inst_{writer_mod_name}.{arr_name}_ce"
