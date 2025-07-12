@@ -435,20 +435,32 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             cond = dump_rval(expr.cond, False)
             values = [dump_rval(v, False) for v in expr.values]
              
-            value_type = dump_type(expr.values[0].dtype)
-            zero_value = f"{value_type}(0)"
+              
+            if len(values) == 1:
+                body = f"{rval} = {values[0]}"
+            else: 
+                print(expr.parent)
+                selector_body = expr.parent._body
+                for expr_tmp in selector_body:
+                    if dump_rval(expr_tmp, False)==cond:
+                        b = dump_rval(expr_tmp.rhs, False)
+                        break
+ 
+                binary_selector_name = f"{rval}_selector"
+ 
+                selector_bits = (len(values) - 1).bit_length()
+ 
+                encoder_code = (
+                    f"{binary_selector_name} = "
+                    f"{b}.as_bits({selector_bits})"
+                )
+                self.append_code(encoder_code) 
+                values_str = ", ".join(values)
+                mux_code = f"{rval} = Mux({binary_selector_name}, {values_str})"
+                self.append_code(mux_code)
+ 
+                body = None
             
-            gated_terms = []
-            for i, value_name in enumerate(values):
-                term = f"Mux({cond}.as_bits()[{i}], {zero_value}, {value_name})"
-                gated_terms.append(f"({term})")
-             
-            if not gated_terms:
-                body = f"{rval} = {zero_value}"
-            else:
-                final_expr = " | ".join(gated_terms)
-                body = f"{rval} = {final_expr}"
-           
         elif isinstance(expr, Intrinsic):
             intrinsic = expr.opcode
             if intrinsic == Intrinsic.FINISH: 
