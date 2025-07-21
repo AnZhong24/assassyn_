@@ -43,8 +43,8 @@ def dump_type(ty: DType) -> str:
     if isinstance(ty, Bits):
         return f"Bits({ty.bits})"
     if isinstance(ty, Record): 
-        fields = [f"'{name}': {dump_type(dtype)}" for _, (name, dtype) in ty.fields.items()]
-        return f"Struct({{{', '.join(fields)}}})"
+        return f"Bits({ty.bits})"
+
     if isinstance(ty, slice):
         width = ty.stop - ty.start + 1
         return f"Bits({width})"
@@ -55,15 +55,15 @@ def dump_type_cast(ty: DType,bits:int = None) -> str:
     if isinstance(ty, Int):
         if bits:
             return f"as_sint({bits})"
-        return "as_sint()"
+        return f"as_sint({ty.bits})"
     if isinstance(ty, UInt):
         if bits:
-            return "as_uint({bits})"
-        return "as_uint()"
+            return f"as_uint({bits})"
+        return f"as_uint({ty.bits})"
     if isinstance(ty, Bits):
         if bits:
-            return "as_bits({bits})"
-        return "as_bits()"
+            return f"as_bits({bits})"
+        return f"as_bits({ty.bits})"
     raise ValueError(f"Unknown type: {type(ty)}")
 
 class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
@@ -149,11 +149,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 return f"{owner_module_name}_{raw}"
             return raw
         if isinstance(node, RecordValue):
-            record_type = node._dtype
-            record_type_str = dump_type(record_type)
-    
-            return f"{record_type_str}"
-
+            return self.dump_rval(node.value(), with_namespace, module_name)
+             
         raise ValueError(f"Unknown node of kind {type(node).__name__}")
 
     def append_code(self, code: str):
@@ -214,8 +211,11 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.visit_expr(i)
             elif isinstance(i, Block):
                 self.visit_block(i)
+            elif isinstance(i, RecordValue):
+                pass
             else:
-                raise ValueError(f'Unknown node type: {type(node)}')
+                print(i)
+                raise ValueError(f'Unknown node type: {type(i)}')
         
         if is_cond or is_cycle: 
             self.cond_stack.pop()
@@ -244,7 +244,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if lhs_type.bits != rhs_type.bits:
                     b = f"BitsSignal.concat([Bits({lhs_type.bits - rhs_type.bits})(0), {b}.as_bits()])"
  
-                b = f"{b}.as_bits()"
+                b = f"{b}.as_bits({lhs_type.bits})"
                 a = f"{a}.as_bits()"
 
                 op_class_name = None
@@ -271,7 +271,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             else: 
                 op_str = BinaryOp.OPERATORS[expr.opcode]
                 if expr.lhs.dtype != expr.rhs.dtype:
-                    b=f"{b}.{dump_type_cast(expr.lhs.dtype)}"
+                    b=f"{b}.{dump_type_cast(expr.lhs.dtype )}"
                 if op_str == "&":
                     if expr.rhs.dtype != Bits:
                         b=f"{b}.as_bits()"
@@ -382,11 +382,17 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             array_idx = unwrap_operand(expr.idx)
             array_idx = (self.dump_rval(array_idx, False)
                          if not isinstance(array_idx, Const) else array_idx.value)
-            array_name = self.dump_rval(array_ref, False) 
-            body = f'{rval} = self.{array_name}_q_in[{array_idx}].{dump_type_cast(expr.dtype)}'
-            self.expose('array', expr)
-        elif isinstance(expr, ArrayWrite):
             
+            if dump_type(expr.idx.dtype)!=Bits and not isinstance(array_idx, int):
+                array_idx = f"{array_idx}.as_bits()"
+
+            array_name = self.dump_rval(array_ref, False) 
+            if isinstance(expr.dtype, Record):
+                body = f'{rval} = self.{array_name}_q_in[{array_idx}]'
+            else:
+                body = f'{rval} = self.{array_name}_q_in[{array_idx}].{dump_type_cast(expr.dtype)}'
+            self.expose('array', expr)
+        elif isinstance(expr, ArrayWrite): 
             self.expose('array', expr)
         elif isinstance(expr, FIFOPush):
             self.expose('fifo', expr)
@@ -418,16 +424,11 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Unknown intrinsic: {expr}")
         elif isinstance(expr, AsyncCall):
             self.expose('trigger', expr)
-        elif isinstance(expr, Slice):
-            a_var = expr.x
-            a = self.dump_rval(a_var, False)
-            if isinstance(a_var,Record):
-                field_index = expr.l.value.value 
-                field_name = list(a_var.dtype.fields.keys())[field_index]
-                body = f"{rval} = {a}.{field_name}"
-            else:
-                l = expr.l.value.value
-                r = expr.r.value.value
+        elif isinstance(expr, Slice): 
+            a = self.dump_rval(expr.x, False)
+            
+            l = expr.l.value.value
+            r = expr.r.value.value
             body = f"{rval} = {a}.as_bits()[{l}:{r+1}]"
         elif isinstance(expr, Concat):
             a = self.dump_rval(expr.msb, False)
@@ -568,7 +569,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if not writes: continue
                 array_name = self.dump_rval(key, False)
                 array_dtype = key.scalar_ty
-                print(array_dtype)
+              
                 ce_terms = [p for _, p in writes]
                 self.append_code(f'self.{array_name}_w = executed_wire & ({" | ".join(ce_terms)})')
                 
@@ -582,8 +583,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     widx_mux = f"Mux({pred},  {widx_mux},{self.dump_rval(expr.idx, False)})"
                 self.append_code(f'self.{array_name}_widx = {widx_mux}')
  
-            elif isinstance(key, Port):
-                # Check what kind of operations were exposed for this port
+            elif isinstance(key, Port): 
                 has_push = any(isinstance(e, FIFOPush) for e, p in exposes)
                 has_pop = any(isinstance(e, FIFOPop) for e, p in exposes)
 
@@ -747,20 +747,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.append_code(f'{namify(fifo_port.module.name)}_{namify(fifo_port.name)}_push_data = Output({dump_type(dtype)})')
         for callee in unique_call_handshake_targets:
             self.append_code(f'{namify(callee.name)}_trigger = Output(UInt(8))')
-    
-        for arr in self.sys.arrays:
-            if node in self.array_users.get(arr, []):
-                # Modules now receive the array's state via a simple 'q_in' port
-                self.append_code(f'{namify(arr.name)}_q_in = Input(dim({dump_type(arr.scalar_ty)}, {arr.size}))')
-                if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(node.body)):
-                    
-                    self.append_code(f'{namify(arr.name)}_w = Output(Bits(1))')
-                    self.append_code(f'{namify(arr.name)}_wdata = Output({dump_type(arr.scalar_ty)})')
 
-                    
-                    idx_type = next(e.idx.dtype for e in self._walk_expressions(node.body) if isinstance(e, ArrayWrite) and e.array == arr)
-                    self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(idx_type)})')
+        for arr_container in self.sys.arrays:
+            for arr in arr_container.partition:
+                if node in self.array_users.get(arr, []): 
+                    self.append_code(f'{namify(arr.name)}_q_in = Input(dim({dump_type(arr.scalar_ty)}, {arr.size}))')
+                    if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(node.body)):
 
+                        self.append_code(f'{namify(arr.name)}_w = Output(Bits(1))')
+                        self.append_code(f'{namify(arr.name)}_wdata = Output({dump_type(arr.scalar_ty)})')
+
+                        idx_type = next(e.idx.dtype for e in self._walk_expressions(node.body) if isinstance(e, ArrayWrite) and e.array == arr)
+                        self.append_code(f'{namify(arr.name)}_widx = Output({dump_type(idx_type)})')
  
         for port_code in self.exposed_ports_to_add:
             self.append_code(port_code)
@@ -785,8 +783,9 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     def visit_system(self, sys: SysBuilder):
         self.sys = sys
         
-        for arr in sys.arrays: 
-            self.visit_array(arr) 
+        for arr_container in sys.arrays:
+            for arr in arr_container.partition:
+                self.visit_array(arr) 
 
         expr_to_module = {}
         for module in sys.modules + sys.downstreams:
@@ -818,16 +817,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                         self.async_callees[callee].append(module)
 
         self.array_users = {}
-        for arr in self.sys.arrays:
-            self.array_users[arr] = []
-            for mod in self.sys.modules + self.sys.downstreams:
-                for expr in self._walk_expressions(mod.body):
-                    if isinstance(expr, (ArrayRead, ArrayWrite)) and expr.array == arr:
-                        if mod not in self.array_users[arr]:
-                            self.array_users[arr].append(mod)
+        for arr_container in self.sys.arrays:
+            for arr in arr_container.partition:
+                self.array_users[arr] = []
+                for mod in self.sys.modules + self.sys.downstreams:
+                    for expr in self._walk_expressions(mod.body):
+                        if isinstance(expr, (ArrayRead, ArrayWrite)) and expr.array == arr:
+                            if mod not in self.array_users[arr]:
+                                self.array_users[arr].append(mod)
 
-        # for elem in sys.arrays:
-        #     self.visit_array(elem)
         for elem in sys.modules:
             self.current_module = elem
             self.visit_module(elem)
@@ -868,29 +866,35 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code(f'data_reg = Reg({dim_type}, clk=self.clk, rst=self.rst, rst_value=[0]*{size})')
         self.append_code('')
 
-        for i in range(size):
-            elements = [f'self.wdata_ins' if i == j else f'data_reg[{j}]' for j in range(size)]
-            self.append_code(f'write_at_{i} = {dim_type}([{", ".join(elements)}])')
-        self.append_code('')
+        
 
-        if size > 1:
-            num_mux_inputs = 1 << index_bits
-            args_list = [f'write_at_{i}' for i in range(size)]
-            if len(args_list) < num_mux_inputs:
-                padding_val = f'write_at_{size - 1}'  
-                args_list.extend([padding_val] * (num_mux_inputs - len(args_list)))
-            args_str = ", ".join(args_list)
-            self.append_code(f'data_if_writing = Mux(self.widx_ins, {args_str})')
-        else:
-            self.append_code('data_if_writing = write_at_0')
-        self.append_code('')
+        self.append_code(f'next_data_values = [ Mux(self.widx_ins == Bits({index_bits})(i), data_reg[i],self.wdata_ins) for i in range({size}) ]')
+        self.append_code(f'next_data_values =  {dim_type}(next_data_values)')
+        self.append_code(f'next_data = Mux(self.w_ins,data_reg,next_data_values)')
+        self.append_code(f'data_reg.assign(next_data)')
+        self.append_code(f'self.q_out = data_reg')
+        # for i in range(size):
+        #     elements = [f'self.wdata_ins' if i == j else f'data_reg[{j}]' for j in range(size)]
+        #     self.append_code(f'write_at_{i} = {dim_type}([{", ".join(elements)}])')
+        # self.append_code('')
 
-        # Mux(sel, if_sel_is_0, if_sel_is_1). If w_ins=1, write.
-        self.append_code('next_data = Mux(self.w_ins, data_reg, data_if_writing)')
-        self.append_code('')
-        self.append_code('data_reg.assign(next_data)')
-        self.append_code('')
-        self.append_code('self.q_out = data_reg')
+        # if size > 1:
+        #     num_mux_inputs = 1 << index_bits
+        #     args_list = [f'write_at_{i}' for i in range(size)]
+        #     if len(args_list) < num_mux_inputs:
+        #         padding_val = f'write_at_{size - 1}'  
+        #         args_list.extend([padding_val] * (num_mux_inputs - len(args_list)))
+        #     args_str = ", ".join(args_list)
+        #     self.append_code(f'data_if_writing = Mux(self.widx_ins, {args_str})')
+        # else:
+        #     self.append_code('data_if_writing = write_at_0')
+        # self.append_code('')
+ 
+        # self.append_code('next_data = Mux(self.w_ins, data_reg, data_if_writing)')
+        # self.append_code('')
+        # self.append_code('data_reg.assign(next_data)')
+        # self.append_code('')
+        # self.append_code('self.q_out = data_reg')
         self.indent -= 8
         self.append_code('')
 
@@ -939,18 +943,31 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             self.append_code(f'{tc_base_name}_pop_ready = Wire(Bits(1))')
 
         # Wires for Arrays (one per global array)
-        for arr in self.sys.arrays:
-            arr_name = namify(arr.name)
-            index_bits = arr.index_bits if arr.index_bits > 0 else 1
-            self.append_code(f'# Wires for {arr_name}')
-            self.append_code(f'aw_{arr_name}_w_ins = Wire(Bits(1))')
-            self.append_code(f'aw_{arr_name}_wdata_ins = Wire({dump_type(arr.scalar_ty)})')
-            self.append_code(f'aw_{arr_name}_widx_ins = Wire(Bits({index_bits}))')
+        # for arr in self.sys.arrays:
+        #     arr_name = namify(arr.name)
+        #     index_bits = arr.index_bits if arr.index_bits > 0 else 1
+        #     self.append_code(f'# Wires for {arr_name}')
+        #     self.append_code(f'aw_{arr_name}_w_ins = Wire(Bits(1))')
+        #     self.append_code(f'aw_{arr_name}_wdata_ins = Wire({dump_type(arr.scalar_ty)})')
+        #     self.append_code(f'aw_{arr_name}_widx_ins = Wire(Bits({index_bits}))')
              
-            self.append_code(f'array_writer_{arr_name} = {arr_name}(')
-            self.append_code(f'    clk=self.clk, rst=self.rst,')
-            self.append_code(f'    w_ins=aw_{arr_name}_w_ins, wdata_ins=aw_{arr_name}_wdata_ins, widx_ins=aw_{arr_name}_widx_ins)')
-            self.append_code('')
+        #     self.append_code(f'array_writer_{arr_name} = {arr_name}(')
+        #     self.append_code(f'    clk=self.clk, rst=self.rst,')
+        #     self.append_code(f'    w_ins=aw_{arr_name}_w_ins, wdata_ins=aw_{arr_name}_wdata_ins, widx_ins=aw_{arr_name}_widx_ins)')
+        #     self.append_code('')
+        for arr_container in self.sys.arrays:
+            for arr in arr_container.partition:
+                arr_name = namify(arr.name)
+                index_bits = arr.index_bits if arr.index_bits > 0 else 1
+                self.append_code(f'# Wires for {arr_name}')
+                self.append_code(f'aw_{arr_name}_w_ins = Wire(Bits(1))')
+                self.append_code(f'aw_{arr_name}_wdata_ins = Wire({dump_type(arr.scalar_ty)})')
+                self.append_code(f'aw_{arr_name}_widx_ins = Wire(Bits({index_bits}))')
+
+                self.append_code(f'array_writer_{arr_name} = {arr_name}(')
+                self.append_code(f'    clk=self.clk, rst=self.rst,')
+                self.append_code(f'    w_ins=aw_{arr_name}_w_ins, wdata_ins=aw_{arr_name}_wdata_ins, widx_ins=aw_{arr_name}_widx_ins)')
+                self.append_code('')
 
       
 
@@ -1018,10 +1035,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             
             unique_push_targets = {(p.fifo.module, p.fifo) for p in pushes}
             unique_call_targets = {c.bind.callee for c in calls}
- 
+             
             for (callee_mod, callee_port) in unique_push_targets:
                 port_map.append(f"fifo_{namify(callee_mod.name)}_{namify(callee_port.name)}_push_ready=fifo_{namify(callee_mod.name)}_{namify(callee_port.name)}_push_ready")
-            
+                 
             for callee_mod in unique_call_targets:
                 port_map.append(f"{namify(callee_mod.name)}_trigger_counter_delta_ready={namify(callee_mod.name)}_trigger_counter_delta_ready")
 
@@ -1029,26 +1046,24 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 for port in module.ports:
                     fifo_base_name = f'fifo_{mod_name}_{namify(port.name)}'
                     if isinstance(port.dtype, Record): 
-                        struct_type = dump_type(port.dtype)
-                        port_map.append(f"{namify(port.name)}={struct_type}({fifo_base_name}_pop_data)")
+                        port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data")
                     else:
                         port_map.append(f"{namify(port.name)}={fifo_base_name}_pop_data.{dump_type_cast(port.dtype)}")
                     port_map.append(f"{namify(port.name)}_valid={fifo_base_name}_pop_valid")
             
             self.append_code(f"inst_{mod_name} = {mod_name}({', '.join(port_map)})")
-
+ 
             if not is_downstream:
                 self.append_code(f"{mod_name}_trigger_counter_pop_ready.assign(inst_{mod_name}.executed)")
                 
                 for port in module.ports:
                     if any(isinstance(e, FIFOPop) and e.fifo == port for e in self._walk_expressions(module.body)):
                         self.append_code(f"fifo_{mod_name}_{namify(port.name)}_pop_ready.assign(inst_{mod_name}.{namify(port.name)}_pop_ready)")
-    
-                for (callee_mod, callee_port) in unique_push_targets:
-                    callee_mod_name = namify(callee_mod.name)
-                    callee_port_name = namify(callee_port.name) 
-                    self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_valid.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_valid)")
-                    self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_data.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_data.as_bits())")
+            for (callee_mod, callee_port) in unique_push_targets:
+                callee_mod_name = namify(callee_mod.name)
+                callee_port_name = namify(callee_port.name) 
+                self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_valid.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_valid)")
+                self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_data.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_data.as_bits())")
 
         self.append_code('\n# --- Tie off unused FIFO push ports ---')
         for module in self.sys.modules:
@@ -1058,51 +1073,58 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                     self.append_code(f'{fifo_base_name}_push_valid.assign(Bits(1)(0))')
                     self.append_code(f'{fifo_base_name}_push_data.assign(Bits({port.dtype.bits})(0))')
         self.append_code('\n# --- Array Write-Back Connections ---')
-        for arr, users in self.array_users.items():
-            arr_name = namify(arr.name)
-            writers = [m for m in users if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(m.body))]
-            
-            if len(writers) == 1:
-                # Single writer: direct connection
-                writer_mod_name = namify(writers[0].name)
-                self.append_code(f"aw_{arr_name}_w_ins.assign(inst_{writer_mod_name}.{arr_name}_w)")
-                self.append_code(f"aw_{arr_name}_wdata_ins.assign(inst_{writer_mod_name}.{arr_name}_wdata)")
-                if arr.index_bits > 0 : 
-                     self.append_code(f"aw_{arr_name}_widx_ins.assign(inst_{writer_mod_name}.{arr_name}_widx.as_bits({arr.index_bits}))")
-                else:
-                     self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits(1)(0))")
+        for arr_container in self.sys.arrays:
+            for arr in arr_container.partition:
+                arr_name = namify(arr.name)
+                # The rest of the logic inside this loop remains the same,
+                # as it correctly operates on the 'arr' object which is now a partition.
+                users = self.array_users.get(arr, [])
+                writers = [m for m in users if any(isinstance(e, ArrayWrite) and e.array == arr for e in self._walk_expressions(m.body))]
 
-            elif len(writers) > 1:
-                # Multiple writers: arbitration logic
-                self.append_code(f'# Arbitrating multiple writers for array {arr_name}')
-                w_terms = [f"inst_{namify(w.name)}.{arr_name}_w" for w in writers]
-                self.append_code(f"aw_{arr_name}_w_ins.assign({' | '.join(w_terms)})")
+                if len(writers) == 1:
+                    # Single writer: direct connection
+                    writer_mod_name = namify(writers[0].name)
+                    self.append_code(f"aw_{arr_name}_w_ins.assign(inst_{writer_mod_name}.{arr_name}_w)")
+                    self.append_code(f"aw_{arr_name}_wdata_ins.assign(inst_{writer_mod_name}.{arr_name}_wdata)")
+                    if arr.index_bits > 0 : 
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign(inst_{writer_mod_name}.{arr_name}_widx.as_bits({arr.index_bits}))")
+                    else:
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits(1)(0))")
 
-                # WData Mux
-                wdata_mux = f"{dump_type(arr.scalar_ty)}(0)" 
-                for writer in reversed(writers):
-                    w_mod_name = namify(writer.name)
-                    cond = f"inst_{w_mod_name}.{arr_name}_w"
-                    true_val = f"inst_{w_mod_name}.{arr_name}_wdata"
-                    wdata_mux = f"Mux({cond}, {wdata_mux}, {true_val})"
-                self.append_code(f"aw_{arr_name}_wdata_ins.assign({wdata_mux})")
-                
-                # WIdx Mux
-                if arr.index_bits > 0:
-                    widx_mux = f"Bits({arr.index_bits})(0)"
+                elif len(writers) > 1:
+                    # Multiple writers: arbitration logic
+                    self.append_code(f'# Arbitrating multiple writers for array {arr_name}')
+                    w_terms = [f"inst_{namify(w.name)}.{arr_name}_w" for w in writers]
+                    self.append_code(f"aw_{arr_name}_w_ins.assign({' | '.join(w_terms)})")
+
+                    # WData Mux
+                    wdata_mux = f"{dump_type(arr.scalar_ty)}(0)" 
                     for writer in reversed(writers):
                         w_mod_name = namify(writer.name)
                         cond = f"inst_{w_mod_name}.{arr_name}_w"
-                        true_val = f"inst_{w_mod_name}.{arr_name}_widx"
-                        widx_mux = f"Mux({cond}, {widx_mux}, {true_val})"
-                    self.append_code(f"aw_{arr_name}_widx_ins.assign({widx_mux})")
-                else:
-                     self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits(1)(0))")
-            else:  
-                self.append_code(f"aw_{arr_name}_w_ins.assign(Bits(1)(0))")
-                self.append_code(f"aw_{arr_name}_wdata_ins.assign({dump_type(arr.scalar_ty)}(0))")
-                if arr.index_bits > 0:
-                     self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits({arr.index_bits})(0))")
+                        true_val = f"inst_{w_mod_name}.{arr_name}_wdata"
+                        wdata_mux = f"Mux({cond}, {wdata_mux}, {true_val})"
+                    self.append_code(f"aw_{arr_name}_wdata_ins.assign({wdata_mux})")
+                    
+                    # WIdx Mux
+                    if arr.index_bits > 0:
+                        widx_mux = f"Bits({arr.index_bits})(0)"
+                        for writer in reversed(writers):
+                            w_mod_name = namify(writer.name)
+                            cond = f"inst_{w_mod_name}.{arr_name}_w"
+                            true_val = f"inst_{w_mod_name}.{arr_name}_widx"
+                            widx_mux = f"Mux({cond}, {widx_mux}, {true_val})"
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign({widx_mux})")
+                    else:
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits(1)(0))")
+                else:  
+                    self.append_code(f"aw_{arr_name}_w_ins.assign(Bits(1)(0))")
+                    self.append_code(f"aw_{arr_name}_wdata_ins.assign({dump_type(arr.scalar_ty)}(0))")
+                    if arr.index_bits > 0:
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits({arr.index_bits})(0))")
+                    else:
+                        self.append_code(f"aw_{arr_name}_widx_ins.assign(Bits(1)(0))")
+
 
 
            
