@@ -244,7 +244,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if lhs_type.bits != rhs_type.bits:
                     b = f"BitsSignal.concat([Bits({lhs_type.bits - rhs_type.bits})(0), {b}.as_bits()])"
  
-                b = f"{b}.as_bits({lhs_type.bits})"
+                b = f"{b}.as_bits()"
                 a = f"{a}.as_bits()"
 
                 op_class_name = None
@@ -259,7 +259,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if op_class_name is None:
                     raise TypeError(f"Unhandled shift operation: {binop}")
                  
-                body = f"{rval} = {op_class_name}({a}, {b}).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
+                body = f"{rval} = {op_class_name}({a}, {b}).as_bits({dtype.bits})[0:{dtype.bits}].{dump_type_cast(dtype)}"
          
             elif binop == BinaryOp.MOD: 
                 if expr.dtype.is_signed():
@@ -267,7 +267,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 else:
                     op_class_name = "comb.ModUOp"
                 
-                body = f"{rval} = {op_class_name}({a}.as_bits(), {b}.as_bits()).as_bits()[0:{dtype.bits}].{dump_type_cast(dtype)}"
+                body = f"{rval} = {op_class_name}({a}.as_bits(), {b}.as_bits()).as_bits({dtype.bits})[0:{dtype.bits}].{dump_type_cast(dtype)}"
             else: 
                 op_str = BinaryOp.OPERATORS[expr.opcode]
                 if expr.lhs.dtype != expr.rhs.dtype:
@@ -275,17 +275,18 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 if op_str == "&":
                     if expr.rhs.dtype != Bits:
                         b=f"{b}.as_bits()"
-                op_body = f"(({a} {op_str} {b}).as_bits()[0:{dtype.bits}]).{dump_type_cast(dtype)}"
+                op_body = f"(({a} {op_str} {b}).{dump_type_cast(dtype)})"
                 body = f'{rval} = {op_body}'
                 
         elif isinstance(expr, UnaryOp):
             uop = expr.opcode
+            target_cast_str = dump_type_cast(expr.dtype)
             op_str = "~" if uop == UnaryOp.FLIP else "-"
             x = self.dump_rval(expr.x, False)
             if uop == UnaryOp.FLIP:
                 x = f"({x}.as_bits())" 
             body = f"{op_str}{x}"
-            body = f'{rval} = {body}'
+            body = f'{rval} = ({body}).{target_cast_str}'
         
         elif isinstance(expr, Log):
             formatter_str = expr.operands[0].value
@@ -457,10 +458,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         elif isinstance(expr, Select):
             cond = self.dump_rval(expr.cond, False)
             true_value = self.dump_rval(expr.true_value, False)
-            
-             
-            false_value = self.dump_rval(expr.false_value, False)
 
+            false_value = self.dump_rval(expr.false_value, False)
+            if (expr.true_value.dtype != expr.false_value.dtype): 
+                false_value =  f"{false_value}.{dump_type_cast(expr.true_value)}"
             body = f'{rval} = Mux({cond}, {false_value}, {true_value})'
         elif isinstance(expr, Bind):
             body = None
@@ -573,9 +574,15 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 ce_terms = [p for _, p in writes]
                 self.append_code(f'self.{array_name}_w = executed_wire & ({" | ".join(ce_terms)})')
                 
-                wdata_mux = f"Mux({writes[0][1]}, {dump_type(array_dtype)}(0),{self.dump_rval(writes[0][0].val, False)} )"
+                write_0 = f'{self.dump_rval(writes[0][0].val, False)}'
+                if (writes[0][0].val.dtype != dump_type(array_dtype)):
+                    write_0 = f"{write_0}.{dump_type_cast(array_dtype)}"
+                wdata_mux = f"Mux({writes[0][1]}, {dump_type(array_dtype)}(0),{write_0} )"
                 for expr, pred in writes[1:]:
-                     wdata_mux = f"Mux({pred}, {wdata_mux},{self.dump_rval(expr.val, False)})"
+                    write_0 = f'{self.dump_rval(expr.val, False)}'
+                    if (expr.val.dtype != dump_type(array_dtype)):
+                        write_0 = f"{write_0}.{dump_type_cast(array_dtype)}" 
+                    wdata_mux = f"Mux({pred}, {wdata_mux},{write_0})"
                 self.append_code(f'self.{array_name}_wdata = {wdata_mux}')
                 
                 widx_mux = f"Mux({writes[0][1]}, {dump_type(writes[0][0].idx.dtype)}(0), {self.dump_rval(writes[0][0].idx, False)})"
@@ -863,7 +870,13 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('def construct(self):')
         self.indent += 4
 
-        self.append_code(f'data_reg = Reg({dim_type}, clk=self.clk, rst=self.rst, rst_value=[0]*{size})')
+        initializer = array.initializer
+        if initializer is not None: 
+            rst_value_str = str(initializer)
+        else: 
+            rst_value_str = f"[0] * {size}"
+
+        self.append_code(f'data_reg = Reg({dim_type}, clk=self.clk, rst=self.rst, rst_value={rst_value_str})')
         self.append_code('')
 
         
@@ -873,28 +886,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code(f'next_data = Mux(self.w_ins,data_reg,next_data_values)')
         self.append_code(f'data_reg.assign(next_data)')
         self.append_code(f'self.q_out = data_reg')
-        # for i in range(size):
-        #     elements = [f'self.wdata_ins' if i == j else f'data_reg[{j}]' for j in range(size)]
-        #     self.append_code(f'write_at_{i} = {dim_type}([{", ".join(elements)}])')
-        # self.append_code('')
-
-        # if size > 1:
-        #     num_mux_inputs = 1 << index_bits
-        #     args_list = [f'write_at_{i}' for i in range(size)]
-        #     if len(args_list) < num_mux_inputs:
-        #         padding_val = f'write_at_{size - 1}'  
-        #         args_list.extend([padding_val] * (num_mux_inputs - len(args_list)))
-        #     args_str = ", ".join(args_list)
-        #     self.append_code(f'data_if_writing = Mux(self.widx_ins, {args_str})')
-        # else:
-        #     self.append_code('data_if_writing = write_at_0')
-        # self.append_code('')
- 
-        # self.append_code('next_data = Mux(self.w_ins, data_reg, data_if_writing)')
-        # self.append_code('')
-        # self.append_code('data_reg.assign(next_data)')
-        # self.append_code('')
-        # self.append_code('self.q_out = data_reg')
+        
         self.indent -= 8
         self.append_code('')
 
@@ -1065,7 +1057,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_valid.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_valid)")
                 self.append_code(f"fifo_{callee_mod_name}_{callee_port_name}_push_data.assign(inst_{mod_name}.{callee_mod_name}_{callee_port_name}_push_data.as_bits())")
 
-        self.append_code('\n# --- Tie off unused FIFO push ports ---')
+        # self.append_code('\n# --- Tie off unused FIFO push ports ---')
         for module in self.sys.modules:
             for port in module.ports: 
                 if port not in all_driven_fifo_ports:
