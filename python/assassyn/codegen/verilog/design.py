@@ -506,10 +506,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
     // Finish if the execution path is active AND the specific finish condition is met.
     if ({{0}} & {{1}}) $finish;
 `endif
-"""
-                # Generate the sv.VerbatimOp call.
-                # !r ensures the multi-line string is correctly represented in the output python code.
-                # .value is used to pass the signal's value to the substitution mechanism.
+""" 
                 self.finish_body = (f"sv.VerbatimOp({verilog_template!r}, "
                         f"substitutions=[{predicate_signal}.value, executed_wire.value])")
                 body = None
@@ -685,6 +682,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.cond_stack = []
         self.current_module = node
         self.exposed_ports_to_add = []
+        self.finish_body = None
 
         self.visit_block(node.body)
         self.cleanup_post_generation()
@@ -696,8 +694,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         
         self.current_module = node
 
-        is_downstream = isinstance(node, Downstream)
-        is_async_callee = node in self.async_callees
+        is_downstream = isinstance(node, Downstream) 
         is_driver = node not in self.async_callees
         
         self.append_code(f'class {namify(node.name)}(Module):')

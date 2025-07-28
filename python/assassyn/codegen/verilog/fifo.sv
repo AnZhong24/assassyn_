@@ -1,3 +1,4 @@
+
 module fifo #(
     parameter WIDTH = 8,
     parameter DEPTH_LOG2 = 2 // Special case when DEPTH_LOG2 = 0, single element FIFO
@@ -24,7 +25,7 @@ generate
         assign push_ready = ~fifo_full || (fifo_full && pop_ready); 
         assign pop_valid  = fifo_full;                              
 
-        always @(negedge clk or negedge rst_n) begin
+        always @(posedge clk or negedge rst_n) begin
             if (!rst_n) begin
                 fifo_full <= 1'b0;
                 pop_data <= 'x;
@@ -66,12 +67,10 @@ generate
         // The number of elements in the queue after this cycle.
         assign new_count = count + (push_valid ? 1 : 0) - (pop_ready ? 1 : 0);
 
-                 
-
         // The new front of the queue after this cycle.
-        assign new_front = front + (pop_ready && (count != 0 || push_valid) ? 1 : 0);
+        assign new_front = front + (pop_ready && count != 0 ? 1 : 0);
 
-        always @(negedge clk or negedge rst_n) begin
+        always @(posedge clk or negedge rst_n) begin
             if (!rst_n) begin
                 front <= 0;
                 back <= 0;
@@ -85,14 +84,13 @@ generate
                     q[back] <= push_data;
                     back <= (back + 1);
                 end
-               
-                
+
                 front <= new_front;
                 count <= new_count;
 
                 push_ready <= new_count < `FIFO_SIZE;
 
-                temp_pop_valid = ( count != 0)|| push_valid;
+                temp_pop_valid = new_count != 0 || push_valid;
                 pop_valid <= temp_pop_valid;
     // This is the most tricky part of the code:
     // If new_count is 0, we have noting to pop, so we just give pop_valid a 0,
@@ -102,8 +100,7 @@ generate
     // need this result when new_front == back. This indicates the newly
     // pushed data is also the front of the FIFO. Instead of reading it from
     // the array buffer, we directly forward the push_data to pop_data.
-                pop_data <= temp_pop_valid ? (new_count == 0 && push_valid ? push_data : q[front]) : 'x;
-                
+                pop_data <= temp_pop_valid ? (new_front == back && push_valid ? push_data : q[new_front]) : 'x;
 
             end
         end
@@ -115,5 +112,3 @@ generate
 endgenerate
 
 endmodule
-
-
