@@ -499,6 +499,27 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                 self.wait_until = final_cond
             elif intrinsic == Intrinsic.BARRIER:
                 body = None
+            elif intrinsic == Intrinsic.MEM_WRITE:
+            # Create a temporary ArrayWrite to reuse existing logic
+                array = unwrap_operand(expr.args[0])
+                idx = unwrap_operand(expr.args[1])
+                val = unwrap_operand(expr.args[2])
+                temp_write = ArrayWrite(array, idx, val)
+                temp_write.parent = expr.parent
+                self.expose('array', temp_write)
+                body = None
+
+            elif intrinsic == Intrinsic.MEM_READ:
+                # Create a temporary ArrayRead to reuse existing logic
+                array = unwrap_operand(expr.args[0])
+                idx = unwrap_operand(expr.args[1])
+
+                temp_read = ArrayRead(array, idx)
+                temp_read.parent = expr.parent
+                temp_read.scalar_ty = array.scalar_ty
+                self.expose('array', temp_read)
+                body = None
+
             else:
                 raise ValueError(f"Unknown block intrinsic: {expr}")
         else:

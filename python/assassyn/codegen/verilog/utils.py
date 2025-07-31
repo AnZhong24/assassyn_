@@ -35,19 +35,18 @@ def dump_type(ty: DType) -> str:
 def dump_type_cast(ty: DType,bits:int = None) -> str:
     """Dump a type to a string."""
     if isinstance(ty, Int):
-        if bits:
-            return f"as_sint({bits})"
-        return f"as_sint({ty.bits})"
-    if isinstance(ty, UInt):
-        if bits:
-            return f"as_uint({bits})"
-        return f"as_uint({ty.bits})"
-    if isinstance(ty, Bits):
-        if bits:
-            return f"as_bits({bits})"
-        return f"as_bits({ty.bits})"
-    raise ValueError(f"Unknown type: {type(ty)}")
+        name = "sint"
+    elif isinstance(ty, UInt):
+        name = "uint"
+    elif isinstance(ty, (Bits, Record)):
+        name = "bits"
+    else:
+        raise ValueError(f"Unknown type: {type(ty)}")
+    value = bits
+    if value is None and hasattr(ty, 'bits'):
+        value = ty.bits
 
+    return f"as_{name}({value})"
 
 HEADER = '''from pycde import Input, Output, Module, System, Clock, Reset,dim
 from pycde import generator, modparams

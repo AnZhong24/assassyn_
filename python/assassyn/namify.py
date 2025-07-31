@@ -47,11 +47,11 @@ class UnifiedNamingStrategy:
                 if isinstance(index_node, ast.Constant):
                     # Handles a numeric index, e.g., my_array[0]
                     index_val = index_node.value
-                    target_name = f"array_{base_name}[{index_val}]"
+                    target_name = f"array_{base_name}_{index_val}"
                 elif isinstance(index_node, ast.Name):
                     # Handles a variable index, e.g., my_array[i]
                     index_val = index_node.id
-                    target_name = f"array_{base_name}[{index_val}]"
+                    target_name = f"array_{base_name}_{index_val}"
             elif isinstance(target, ast.Tuple):
                 # Multiple targets - handled specially
                 target_name = None
@@ -93,7 +93,7 @@ class UnifiedNamingStrategy:
 
             #This is not worked yet.
             elif method == 'async_called':
-                print(f"async called: {node}")
+                # print(f"async called: {node}")
                 # Handle async_called method calls
                 self._process_async_called(node)
 
@@ -179,8 +179,18 @@ class UnifiedNamingStrategy:
                     self.collected_names.append(f"{node.value.id}_bits_{start}to{stop}")
             else:
                 # Simple subscript: cnt[0] → array_cnt_0
-                if isinstance(node.value, ast.Name):
-                    self.collected_names.append(f"array_{node.value.id}_{node.slice.value}")
+                base_name = node.value.id
+                index_node = node.slice
+
+                if isinstance(index_node, ast.Constant):
+                    # Handles a numeric index, e.g., my_array[0]
+                    index_val = index_node.value
+                    target_name = f"array_{base_name}_{index_val}"
+                elif isinstance(index_node, ast.Name):
+                    # Handles a variable index, e.g., my_array[i]
+                    index_val = index_node.id
+                    target_name = f"array_{base_name}_{index_val}"
+                self.collected_names.append(f"{target_name}")
 
     def _process_pop_all_ports(self, target: ast.Tuple) -> None:
         """Process pop_all_ports tuple unpacking"""
