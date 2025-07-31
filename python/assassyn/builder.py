@@ -7,8 +7,9 @@ import os
 import typing
 import site
 import inspect
-from decorator import decorator
 import ast
+from decorator import decorator
+from .namify import NamingManager
 
 if typing.TYPE_CHECKING:
     from .ir.module import Module
@@ -16,66 +17,56 @@ if typing.TYPE_CHECKING:
     from .ir.dtype import DType
     from .ir.value import Value
 
-
-from .namify import NamingManager 
-
 def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typing.Any]:
     """Process naming for an expression based on line context"""
-    
-    LINE_EXPRESSION_TRACKER = Singleton.line_expression_tracker
-    NAMING_MANAGER = Singleton.naming_manager
+
+    line_expression_tracker = Singleton.line_expression_tracker
+    naming_manager = Singleton.naming_manager
     try:
         parsed_ast = ast.parse(line_of_code)
-        
+
         if parsed_ast.body and isinstance(parsed_ast.body[0], ast.Assign):
             assign_node = parsed_ast.body[0]
-             
-            # print(ast.dump(assign_node, indent=2))  
-           
-            if lineno not in LINE_EXPRESSION_TRACKER:
-                LINE_EXPRESSION_TRACKER[lineno] = {
+
+            if lineno not in line_expression_tracker:
+                line_expression_tracker[lineno] = {
                     'expressions': [],
                     'assign_node': assign_node,
                     'names_generated': False,
                     'generated_names': []
                 }
-            
-            line_data = LINE_EXPRESSION_TRACKER[lineno]
+            line_data = line_expression_tracker[lineno]
 
             if  line_data['names_generated'] and expr.opcode == 800:
-               line_data = LINE_EXPRESSION_TRACKER[lineno]
-             
-               expr_position = len(line_data['expressions']) - 1
-               generated_names = line_data['generated_names'] 
-               if expr_position < len(generated_names):
-                   return f"{generated_names[expr_position]}_cast"
-                
+                line_data = line_expression_tracker[lineno]
+                expr_position = len(line_data['expressions']) - 1
+                generated_names = line_data['generated_names']
+                if expr_position < len(generated_names):
+                    return f"{generated_names[expr_position]}_cast"
 
             line_data['expressions'].append(expr)
-             
-            if not line_data['names_generated'] :
-                generated_names = NAMING_MANAGER.generate_source_names(
+
+            if not line_data['names_generated']:
+                generated_names = naming_manager.generate_source_names(
                     lineno, assign_node
-                ) 
+                )
                 line_data['generated_names'] = generated_names
                 line_data['names_generated'] = True
-               
-             
+
             expr_position = len(line_data['expressions']) - 1
             generated_names = line_data['generated_names']
-            
+
             if expr_position < len(generated_names):
                 source_name = generated_names[expr_position]
-            else: 
+            else:
                 base_name = generated_names[0] if generated_names else "expr"
                 source_name = f"{base_name}_{expr_position}"
-                # print(f"WARNING: Fallback naming: {source_name}")
-             
-            return source_name 
-        
-    except Exception as e:
+
+            return source_name
+
+    except Exception:
         pass
-      
+
     return None
 
 
@@ -118,10 +109,9 @@ def ir_builder(func, *args, **kwargs):
 
                     naming_result = process_naming(
                     res, line_of_code, lineno
-                ) 
+                )
                     if naming_result:
-                        res.source_name = naming_result 
-                     
+                        res.source_name = naming_result
             break
     assert hasattr(res, 'loc')
     return res

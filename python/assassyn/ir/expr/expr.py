@@ -92,9 +92,8 @@ class Expr(Value):
     def as_operand(self):
         '''Dump the expression as an operand'''
         if self.source_name is not None:
-            return f'{self.source_name}' 
-        else:
-            return f'_{namify(identifierize(self))}'
+            return f'{self.source_name}'
+        return f'_{namify(identifierize(self))}'
 
     def is_binary(self):
         '''If the opcode is a binary operator'''
