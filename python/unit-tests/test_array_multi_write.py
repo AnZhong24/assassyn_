@@ -61,7 +61,7 @@ def test_array_multi_write():
         driver = Driver()
         driver.build(mod_a, mod_c)
 
-    simulator_path, verilator_path = elaborate(sys, verilog=utils.has_verilator())
+    simulator_path, verilator_path = elaborate(sys, verilog=True)
     
     utils.run_simulator(simulator_path)
     

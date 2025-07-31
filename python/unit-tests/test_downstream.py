@@ -70,7 +70,7 @@ def test_downstream():
     print(sys)
 
     config = assassyn.backend.config(
-            verilog=utils.has_verilator(),
+            verilog=True,
             sim_threshold=100,
             idle_threshold=100)
 

@@ -63,14 +63,14 @@ def impl(sys_name, width, init_file, resource_base):
         driver = Driver()
         driver.build(width, init_file, user)
 
-    config = backend.config(sim_threshold=200, idle_threshold=200, resource_base=resource_base, verilog=utils.has_verilator())
+    config = backend.config(sim_threshold=200, idle_threshold=200, resource_base=resource_base, verilog=True)
 
     simulator_path, verilator_path = backend.elaborate(sys, **config)
 
     raw = utils.run_simulator(simulator_path)
     check(raw)
 
-    # if utils.has_verilator():
+    # if True:
     #     raw = utils.run_verilator(verilator_path)
     #     check(raw)
 

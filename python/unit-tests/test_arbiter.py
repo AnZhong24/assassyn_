@@ -107,7 +107,7 @@ def test_arbiter():
 
     print(sys)
 
-    simulator_path, verilog_path = elaborate(sys, sim_threshold=200, idle_threshold=200, verilog=utils.has_verilator())
+    simulator_path, verilog_path = elaborate(sys, sim_threshold=200, idle_threshold=200, verilog=True)
 
     raw = utils.run_simulator(simulator_path)
     check(raw)

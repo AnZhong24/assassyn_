@@ -1,6 +1,6 @@
 '''The untilities for the project'''
 
-import timeit
+# import timeit
 import os
 import subprocess
 
@@ -50,20 +50,25 @@ def run_simulator(manifest_path, offline=False, release=True):
     res = _cmd_wrapper(cmd)
     return res
 
-def run_verilator(path, count_time=False):
+def run_verilator(path):
     '''The helper function to run the verilator'''
-    restore = os.getcwd()
+    # restore = os.getcwd()
     os.chdir(path)
-    cmd = ['make', 'main', '-j']
-    subprocess.check_output(cmd).decode('utf-8')
-    # TODO(@were): Fix this hardcoded Vtb later.
-    cmd = ['./obj_dir/Vtb']
-    res = _cmd_wrapper(cmd)
-    if count_time:
-        a = timeit.timeit(lambda: _cmd_wrapper(cmd), number=5)
-        os.chdir(restore)
-        return (res, a)
-    os.chdir(restore)
+    cmd_design = ['python', 'design.py']
+    subprocess.check_output(cmd_design)
+
+    cmd_tb = ['python', 'tb.py']
+    res = _cmd_wrapper(cmd_tb)
+    # cmd = ['make', 'main', '-j']
+    # subprocess.check_output(cmd).decode('utf-8')
+    # # TODO(@were): Fix this hardcoded Vtb later.
+    # cmd = ['./obj_dir/Vtb']
+    # res = _cmd_wrapper(cmd)
+    # if count_time:
+    #     a = timeit.timeit(lambda: _cmd_wrapper(cmd), number=5)
+    #     os.chdir(restore)
+    #     return (res, a)
+    # os.chdir(restore)
     return res
 
 def parse_verilator_cycle(toks):

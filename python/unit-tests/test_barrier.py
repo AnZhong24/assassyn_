@@ -100,7 +100,7 @@ def impl(is_gold):
         driver.build(adder1)
     print(sys)
     config = assassyn.backend.config(
-            verilog=utils.has_verilator(),
+            verilog=True,
             sim_threshold=200,
             idle_threshold=200,
             random=True)

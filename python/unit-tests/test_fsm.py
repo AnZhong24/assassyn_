@@ -78,7 +78,7 @@ def test_fsm():
     print(sys)
 
     config = assassyn.backend.config(
-            verilog=utils.has_verilator(),
+            verilog=True,
             sim_threshold=200,
             idle_threshold=200,
             random=True)

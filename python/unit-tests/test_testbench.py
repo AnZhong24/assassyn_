@@ -34,7 +34,7 @@ def test_testbench():
         testbench = Testbench()
         testbench.build()
 
-    simulator_path, verilator_path = elaborate(sys, verilog=utils.has_verilator())
+    simulator_path, verilator_path = elaborate(sys, verilog=True)
 
     raw = utils.run_simulator(simulator_path)
     check(raw)
