@@ -4,7 +4,7 @@ from typing import Optional
 
 from ...ir.module import Module
 from ...ir.expr import Intrinsic
-from ...ir.dtype import Int, UInt, Bits, DType, Record,RecordValue
+from ...ir.dtype import Int, UInt, Bits, DType, Record
 
 def find_wait_until(module: Module) -> Optional[Intrinsic]:
     """Find the WAIT_UNTIL intrinsic in a module if it exists."""

@@ -12,7 +12,7 @@ from ...ir.visitor import Visitor
 from ...ir.block import Block, CondBlock,CycledBlock
 from ...ir.const import Const
 from ...ir.array import Array
-from ...ir.dtype import Int, UInt, Bits, DType, Record,RecordValue
+from ...ir.dtype import Int, Bits, Record,RecordValue
 from ...utils import namify, unwrap_operand
 from ...ir.expr import (
     Expr,
@@ -31,8 +31,7 @@ from ...ir.expr import (
     Select,
     Bind,
     Select1Hot,
-    Intrinsic ,
-    Operand
+    Intrinsic
 )
 
 
@@ -343,7 +342,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
 
             module_info = f"[{namify(self.current_module.name)}]"
 
-            cycle_info = "Cycle @{{float(dut.global_cycle_count.value):.2f}}:"
+            cycle_info = f"Cycle @{{float(dut.global_cycle_count.value):.2f}}:"# pylint: disable=W1309
 
             final_print_string = (
                  f'f"{line_info} {cycle_info} {module_info:<20} {f_string_content}"'
@@ -452,7 +451,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             if len(values) == 1:
                 body = f"{rval} = {values[0]}"
             else:
-                selector_body = expr.parent._body
+                selector_body = expr.parent._body # pylint: disable=W0212
                 for expr_tmp in selector_body:
                     if self.dump_rval(expr_tmp, False)==cond:
                         b = self.dump_rval(expr_tmp.rhs, False)
@@ -511,7 +510,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         if body is not None:
             self.append_code(body)
 
-    def cleanup_post_generation(self):
+    def cleanup_post_generation(self):# pylint: disable=too-many-locals,too-many-branches,too-many-statements
         """genearting signals for connecting modules"""
         self.append_code('')
 
@@ -658,7 +657,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
         self.append_code('self.executed = executed_wire')
 
 
-    def visit_module(self, node: Module):
+    def visit_module(self, node: Module):# pylint: disable=too-many-locals,too-many-branches,too-many-statements
         # STAGE 1: ANALYSIS & BODY GENERATION
         original_code_buffer = self.code
         original_indent = self.indent
@@ -781,7 +780,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             elif isinstance(item, Block):
                 yield from self._walk_expressions(item)
 
-    def visit_system(self, node: SysBuilder):
+    def visit_system(self, node: SysBuilder):# pylint: disable=too-many-locals,R0912
         sys = node
         self.sys = sys
 
@@ -819,7 +818,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
                         self.async_callees[callee].append(module)
 
         self.array_users = {}
-        for arr_container in self.sys.arrays:
+        for arr_container in self.sys.arrays:# pylint: disable=R1702
             for arr in arr_container.partition:
                 self.array_users[arr] = []
                 for mod in self.sys.modules + self.sys.downstreams:
@@ -882,14 +881,14 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes
             f" for i in range({size}) ]"
         )
         self.append_code(f'next_data_values =  {dim_type}(next_data_values)')
-        self.append_code(f'next_data = Mux(self.w_ins,data_reg,next_data_values)')
-        self.append_code(f'data_reg.assign(next_data)')
-        self.append_code(f'self.q_out = data_reg')
+        self.append_code('next_data = Mux(self.w_ins,data_reg,next_data_values)')
+        self.append_code('data_reg.assign(next_data)')
+        self.append_code('self.q_out = data_reg')
 
         self.indent -= 8
         self.append_code('')
 
-    def _generate_top_harness(self):
+    def _generate_top_harness(self):# pylint: disable=too-many-locals,too-many-branches,too-many-statements
         """
         Generates a generic Top-level harness that connects all modules based on
         the analyzed dependencies (async calls, array usage).

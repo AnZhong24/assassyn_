@@ -29,26 +29,29 @@ class UnifiedNamingStrategy:
         # Reset state
         self.collected_names = []
         self.temp_counter = 0
-
         node = context.ast_node
-
         if isinstance(node, ast.Assign):
             assign = context.ast_node
+
             target = assign.targets[0]
             value = assign.value
-
             if isinstance(target, ast.Name):
                 target_name = target.id
             elif isinstance(target, ast.Attribute):
                 # a.is_ood = ... → record_a_is_ood
                 target_name = f"record_{target.value.id}_{target.attr}"
             elif isinstance(target, ast.Subscript):
-                # a[0] = ... → array_a_0
-                # self._process_value(target.value, target.)
-                if isinstance(target.value, ast.Slice):
-                    target_name = f"array_{target.value.id}_{target.slice.value}"
-                else:
-                    target_name = f"array_{target.value.id}_{target.slice.id}"
+                base_name = target.value.id
+                index_node = target.slice
+
+                if isinstance(index_node, ast.Constant):
+                    # Handles a numeric index, e.g., my_array[0]
+                    index_val = index_node.value
+                    target_name = f"array_{base_name}[{index_val}]"
+                elif isinstance(index_node, ast.Name):
+                    # Handles a variable index, e.g., my_array[i]
+                    index_val = index_node.id
+                    target_name = f"array_{base_name}[{index_val}]"
             elif isinstance(target, ast.Tuple):
                 # Multiple targets - handled specially
                 target_name = None
