@@ -70,9 +70,9 @@ def impl(sys_name, width, init_file, resource_base):
     raw = utils.run_simulator(simulator_path)
     check(raw)
 
-    # if True:
-    #     raw = utils.run_verilator(verilator_path)
-    #     check(raw)
+    if verilator_path:
+        raw = utils.run_verilator(verilator_path)
+        check(raw)
 
 
 def test_memory():
