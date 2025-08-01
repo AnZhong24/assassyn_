@@ -33,7 +33,7 @@ SHELL ["/bin/zsh", "-c"]
 
 RUN pip install \
     pycde \
-    cocotb \
+    cocotb == 1.9.2\
     numpy \
     decorator==5.1.1 \
     pytest==7.4.3 \
