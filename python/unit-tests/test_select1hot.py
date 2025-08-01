@@ -34,7 +34,7 @@ def test_select1hot():
         driver = Driver()
         driver.build()
 
-    simulator_path, verilator_path = elaborate(sys, verilog=True)
+    simulator_path, verilator_path = elaborate(sys, verilog=utils.has_verilator())
 
     raw = utils.run_simulator(simulator_path)
     check(raw)

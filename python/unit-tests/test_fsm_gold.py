@@ -66,7 +66,7 @@ def test_fsm_gold():
     print(sys)
 
     config = assassyn.backend.config(
-            verilog=True,
+            verilog=utils.has_verilator(),
             sim_threshold=200,
             idle_threshold=200,
             random=True)

@@ -59,7 +59,7 @@ def test_explicit_pop():
         driver = Driver()
         driver.build(adder)
 
-    simulator_path, verilator_path = elaborate(sys, verilog=True)
+    simulator_path, verilator_path = elaborate(sys, verilog=utils.has_verilator())
 
     raw = utils.run_simulator(simulator_path)
     check_raw(raw)

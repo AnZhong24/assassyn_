@@ -87,7 +87,7 @@ def test_toposort():
     print(sys)
 
     config = assassyn.backend.config(
-            verilog=True,
+            verilog=utils.has_verilator(),
             sim_threshold=100,
             idle_threshold=100)
 

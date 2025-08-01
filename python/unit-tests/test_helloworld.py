@@ -31,7 +31,7 @@ def test_helloworld():
         driver = Driver()
         driver.build()
 
-    simulator_path, verilog_path = elaborate(sys, verilog=True)
+    simulator_path, verilog_path = elaborate(sys, verilog=utils.has_verilator())
     
     raw = utils.run_simulator(simulator_path)
     check_raw(raw)
