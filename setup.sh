@@ -41,6 +41,7 @@ fi
 if [ "$NO_VERILATOR" = false ]; then
   echo "In-repo verilator found, setting VERILATOR_ROOT to $REPO_PATH/verilator"
   export VERILATOR_ROOT=$REPO_PATH/3rd-party/verilator
+  export PATH=$VERILATOR_ROOT/bin:$PATH
 else
   echo "Verilator is disabled by --no-verilator flag"
 fi

@@ -54,10 +54,10 @@ def run_verilator(path):
     '''The helper function to run the verilator'''
     # restore = os.getcwd()
     os.chdir(path)
-    cmd_design = ['python', 'design.py']
+    cmd_design = ['python3', 'design.py']
     subprocess.check_output(cmd_design)
 
-    cmd_tb = ['python', 'tb.py']
+    cmd_tb = ['python3', 'tb.py']
     res = _cmd_wrapper(cmd_tb)
     # cmd = ['make', 'main', '-j']
     # subprocess.check_output(cmd).decode('utf-8')
@@ -73,7 +73,8 @@ def run_verilator(path):
 
 def parse_verilator_cycle(toks):
     '''Helper function to parse verilator dumped cycle'''
-    return int(toks[0]) // 100
+    # return int(toks[0]) // 100
+    return int(toks[2][1:-4])
 
 def parse_simulator_cycle(toks):
     '''Helper function to parse rust-simulator dumped cycle'''

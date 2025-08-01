@@ -24,6 +24,22 @@ class UnifiedNamingStrategy:
         self.collected_names = []
         self.temp_counter = 0
 
+    def _get_op_symbol(self, op_node: ast.operator) -> str:
+        """Helper to convert an AST operator to a descriptive string."""
+        op_map = {
+            ast.Add: "add",
+            ast.Sub: "sub",
+            ast.Mult: "mul",
+            ast.Div: "div",
+            ast.Mod: "mod",
+            ast.LShift: "shl",
+            ast.RShift: "shr",
+            ast.BitAnd: "and",
+            ast.BitOr: "or",
+            ast.BitXor: "xor",
+        }
+        return op_map.get(type(op_node), "op")
+
     def generate_names(self, context: NamingContext) -> typing.List[str]:
         """Generate names for any assignment pattern"""
         # Reset state
@@ -47,17 +63,17 @@ class UnifiedNamingStrategy:
                 if isinstance(index_node, ast.Constant):
                     # Handles a numeric index, e.g., my_array[0]
                     index_val = index_node.value
-                    target_name = f"array_{base_name}_{index_val}"
+                    target_name = f"array_{base_name}__{index_val}"
                 elif isinstance(index_node, ast.Name):
                     # Handles a variable index, e.g., my_array[i]
                     index_val = index_node.id
-                    target_name = f"array_{base_name}_{index_val}"
+                    target_name = f"array_{base_name}__{index_val}"
             elif isinstance(target, ast.Tuple):
                 # Multiple targets - handled specially
                 target_name = None
             elif isinstance(target, ast.Subscript):
                 if isinstance(target.value, ast.Name):
-                    target_name = f"array_{target.value.id}_{target.slice.value}"
+                    target_name = f"array_{target.value.id}__{target.slice.value}"
             else:
                 target_name = "result"
 
@@ -115,10 +131,14 @@ class UnifiedNamingStrategy:
 
     def _process_binop(self, node: ast.BinOp, base_name: str, is_root: bool = True) -> None:
         """Process binary operations recursively"""
+        op_str = self._get_op_symbol(node.op)
+        # Create more descriptive base names for the left and right sides
+        left_base_name = f"{base_name}_{op_str}_lhs"
+        right_base_name = f"{base_name}_{op_str}_rhs"
         # Process left operand
-        self._process_operand(node.left, base_name)
+        self._process_operand(node.left, left_base_name)
         # Process right operand
-        self._process_operand(node.right, base_name)
+        self._process_operand(node.right, right_base_name)
         # Add name for this BinOp result
         if is_root:
             self.collected_names.append(base_name)

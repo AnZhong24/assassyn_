@@ -25,7 +25,7 @@ def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typ
     naming_manager = Singleton.naming_manager
     try:
         parsed_ast = ast.parse(line_of_code)
-        # print(ast.dump(parsed_ast, indent=4))
+        print(ast.dump(parsed_ast, indent=4))
         if parsed_ast.body and isinstance(parsed_ast.body[0], ast.Assign):
             assign_node = parsed_ast.body[0]
 
@@ -61,7 +61,7 @@ def process_naming(expr, line_of_code: str, lineno: int) -> typing.Dict[str, typ
                 source_name = generated_names[expr_position]
             else:
                 base_name = generated_names[0] if generated_names else "expr"
-                source_name = f"{base_name}_{expr_position}"
+                source_name = f"tmp_{base_name}_{expr_position}"
 
             return source_name
 
