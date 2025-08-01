@@ -1,13 +1,13 @@
 # NOTE: This script should be sourced by ZSH! O.w. the directory behaviors will be wrong!
 
 # Check for --no-verilator flag
-# NO_VERILATOR=false
-# for arg in "$@"; do
-#   if [ "$arg" = "--no-verilator" ]; then
-#     NO_VERILATOR=true
-#     break
-#   fi
-# done
+NO_VERILATOR=false
+for arg in "$@"; do
+  if [ "$arg" = "--no-verilator" ]; then
+    NO_VERILATOR=true
+    break
+  fi
+done
 
 # Restore the original directory
 RESTORE_DIR=`pwd`
@@ -38,12 +38,12 @@ if [ -d "$REPO_PATH/3rd-party/circt/build/tools/circt/python_packages/pycde" ]; 
   export PYTHONPATH="$REPO_PATH/3rd-party/circt/build/tools/circt/python_packages/pycde:$PYTHONPATH"
 fi
 
-# if [ "$NO_VERILATOR" = false ]; then
-#   echo "In-repo verilator found, setting VERILATOR_ROOT to $REPO_PATH/verilator"
-#   export VERILATOR_ROOT=$REPO_PATH/3rd-party/verilator
-# else
-#   echo "Verilator is disabled by --no-verilator flag"
-# fi
+if [ "$NO_VERILATOR" = false ]; then
+  echo "In-repo verilator found, setting VERILATOR_ROOT to $REPO_PATH/verilator"
+  export VERILATOR_ROOT=$REPO_PATH/3rd-party/verilator
+else
+  echo "Verilator is disabled by --no-verilator flag"
+fi
 
 # Go back to the original directory
 cd $RESTORE_DIR
