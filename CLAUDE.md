@@ -1,5 +1,4 @@
-- Use `source setup.sh` to set up the environment before running any scripts.
-  - Even for `git commit`, because of pre-commit hooks.
+- Use `setup.sh` to set up the environment before running any scripts.
 - When staging and committing:
   - Follow the rule in ./docs/developer/github.md.
   - This rule also applies to pull requests.
