@@ -1,7 +1,8 @@
 """Assassyn's python frontend."""
 
-from . import frontend
-from . import utils
 from . import backend
+from . import frontend
 from . import ir
+from . import utils
+from . import builder
 from . import ramulator2
