@@ -42,7 +42,6 @@ class TypeOrientedNamer:
             'Concat': 'concat',
             'Select': 'select',
             'Select1Hot': 'sel1h',
-            'Slice': 'slice',
             'Cast': 'cast'
         }
 
@@ -58,6 +57,17 @@ class TypeOrientedNamer:
             return object.__getattribute__(node, attr)
         except (AttributeError, TypeError):
             return None
+
+    @staticmethod
+    def _const_operand_value(operand: Any) -> Optional[int]:
+        """Extract the integer value from a Const-like operand, if available."""
+        if operand is None:
+            return None
+        try:
+            value = object.__getattribute__(operand, 'value')
+        except AttributeError:
+            return None
+        return value if isinstance(value, int) else None
 
     def _entity_name(self, entity: Any) -> Optional[str]:
         """Extract a meaningful name from an entity."""
@@ -146,6 +156,19 @@ class TypeOrientedNamer:
                 return self._binary_ops[opcode]
             if opcode in self._unary_ops:
                 return self._unary_ops[opcode]
+
+        if class_name == 'Slice':
+            source = self._entity_name(self._safe_getattr(node, 'x')) or 'slice'
+            lo = self._const_operand_value(self._safe_getattr(node, 'l'))
+            hi = self._const_operand_value(self._safe_getattr(node, 'r'))
+
+            if lo is not None and hi is not None:
+                if lo == hi:
+                    suffix = f'bit{lo}'
+                else:
+                    suffix = f'{lo}_{hi}'
+                return self._sanitize(f'{source}_slice_{suffix}')
+            return self._sanitize(f'{source}_slice')
 
         name_attr = self._safe_getattr(node, 'name')
         if isinstance(name_attr, str):

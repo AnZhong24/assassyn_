@@ -16,11 +16,13 @@ Extracts a descriptive base name by checking, in order:
    re-used when available.
 3. Intrinsics that expose an opcode/argument pair (`PureIntrinsic`).
 4. Known IR classes mapped through `_class_prefixes` such as `ArrayRead`,
-   `ArrayWrite`, `Array`, `Concat`, `Select`, `Select1Hot`, `Slice`, `Cast`,
+   `ArrayWrite`, `Array`, `Concat`, `Select`, `Select1Hot`, `Cast`,
    `Bind`, `AsyncCall`, and FIFO helpers.
-5. Opcode tables for arithmetic/logic operations.
-6. A `name` attribute on the node.
-7. A final fallback of `"val"`.
+5. Custom heuristics for nodes that benefit from richer prefixes (for example,
+   slices now borrow the source value's name and encode the slice bounds).
+6. Opcode tables for arithmetic/logic operations.
+7. A `name` attribute on the node.
+8. A final fallback of `"val"`.
 
 All intermediate names are sanitised via `_sanitize` so the identifier is
 ASCII-only and uses `_` as separator.
