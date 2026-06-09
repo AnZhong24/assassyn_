@@ -1080,21 +1080,41 @@ class Execution(Module):
 
         is_memory = memory_read | memory_write
         addr = (result.bitcast(UInt(32)) - is_memory.select(offset_reg[0].bitcast(UInt(32)), UInt(32)(0))).bitcast(Bits(32))
+        addr_lsb = addr[0:1]
         request_addr = is_memory.select(addr[2:2 + depth_log - 1].bitcast(UInt(depth_log)), UInt(depth_log)(0))
 
         with Condition(memory_read):
             log("mem-read         | addr: 0x{:05x}| line: 0x{:05x} |", result, request_addr)
         with Condition(memory_write):
-            log("mem-write        | addr: 0x{:05x}| line: 0x{:05x} | value: 0x{:08x} |", result, request_addr, b)
+            log("mem-write        | addr: 0x{:05x}| line: 0x{:05x} | value: 0x{:08x} | wdada: 0x{:08x}", result, request_addr, b, b)
+
+        byte_wmask = Bits(32)(0x000000ff)
+        byte_wdata = Bits(24)(0).concat(b[0:7])
+        byte_wmask = (addr_lsb == Bits(2)(1)).select(Bits(32)(0x0000ff00), byte_wmask)
+        byte_wdata = (addr_lsb == Bits(2)(1)).select(Bits(16)(0).concat(b[0:7]).concat(Bits(8)(0)), byte_wdata)
+        byte_wmask = (addr_lsb == Bits(2)(2)).select(Bits(32)(0x00ff0000), byte_wmask)
+        byte_wdata = (addr_lsb == Bits(2)(2)).select(Bits(8)(0).concat(b[0:7]).concat(Bits(16)(0)), byte_wdata)
+        byte_wmask = (addr_lsb == Bits(2)(3)).select(Bits(32)(0xff000000), byte_wmask)
+        byte_wdata = (addr_lsb == Bits(2)(3)).select(b[0:7].concat(Bits(24)(0)), byte_wdata)
+
+        half_wmask = addr_lsb[1:1].select(Bits(32)(0xffff0000), Bits(32)(0x0000ffff))
+        half_wdata = addr_lsb[1:1].select(b[0:15].concat(Bits(16)(0)), Bits(16)(0).concat(b[0:15]))
+
+        is_half = signals.mem_size == Bits(2)(1)
+        is_byte = signals.mem_size == Bits(2)(2)
+        store_wmask = is_byte.select(byte_wmask, is_half.select(half_wmask, Bits(32)(0xffffffff)))
+        store_wdata = is_byte.select(byte_wdata, is_half.select(half_wdata, b))
 
         dcache = SRAM(width=32, depth=1 << depth_log, init_file=data)
         dcache.name = "dcache"
-        dcache.build(we=memory_write, re=memory_read, wdata=b, addr=request_addr)
+        dcache.build(we=memory_write, re=memory_read, wdata=store_wdata, addr=request_addr, wmask=store_wmask)
 
         bound = memory.bind(
             rd=rd,
             result=signals.link_pc.select(pc_next, result),
-            mem_ext=signals.mem_ext,
+            mem_size=signals.mem_size,
+            mem_unsigned=signals.mem_unsigned,
+            addr_lsb=addr_lsb,
             is_mem_read=memory_read,
             epoch=rd_epoch,
         )
@@ -1424,7 +1444,17 @@ class IssueStage(Module):
             wb1_bypass_reg,
             wb1_bypass_epoch,
         )
-        slot0_ready = head_valid & slot0_rs1_ready & slot0_rs2_ready & (~slot0_rd_blocked)
+        slot0_trap_like = signals0.is_branch & signals0.is_offset_br & signals0.imm_valid & (
+            signals0.imm == Bits(32)(0)
+        ) & (
+            signals0.cond == Bits(RV32I_ALU.CNT)(1 << RV32I_ALU.ALU_TRUE)
+        ) & (
+            signals0.alu == Bits(RV32I_ALU.CNT)(1 << RV32I_ALU.ALU_ADD)
+        )
+        slot0_needs_drain = is_special_op(signals0) | slot0_trap_like
+        slot0_pending_owners = ready_exec0_owner | ready_exec1_owner | ready_mem_owner | ready_wb_owner
+        slot0_drain_ready = (~slot0_needs_drain) | (slot0_pending_owners == Bits(32)(0))
+        slot0_ready = head_valid & slot0_rs1_ready & slot0_rs2_ready & (~slot0_rd_blocked) & slot0_drain_ready
         if (not PURE_DUAL_ISSUE_MODE) and (not DISC_FAIR_DUAL_ISSUE_MODE):
             slot0_pair_valid = slot0_ready & writes_rd(signals0) & (~is_memory_op(signals0))
             slot0_pair_reg = slot0_pair_valid.select(signals0.rd, Bits(5)(0))
