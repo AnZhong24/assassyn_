@@ -115,6 +115,7 @@ def RegArray(  # pylint: disable=invalid-name,too-many-arguments
     resolved_owner = _resolve_owner(owner)
 
     res = Array(scalar_ty, size, initializer, resolved_owner)
+    res.attr = list(attr)
     if name is not None:
         res.name = name
 

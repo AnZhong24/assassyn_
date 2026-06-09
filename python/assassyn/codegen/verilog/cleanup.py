@@ -133,6 +133,7 @@ def _format_reduction_expr(
     return f"reduce({op}, [{joined}], {default_literal})"
 
 
+# pylint: disable-next=too-many-arguments
 def _emit_predicate_mux_chain(
     entries: Sequence[T],
     *,
@@ -408,6 +409,11 @@ def cleanup_post_generation(dumper):
                     ),
                 )
 
+                dumper.append_code(
+                    f'self.{array_name}_w{port_suffix} = executed_wire & ({aggregated_predicates})'
+                )
+
+                dumper.append_code(f'self.{array_name}_wdata{port_suffix} = {wdata_expr}')
                 idx_default = f"{dump_type(module_writes[0].idx.dtype)}(0)"
 
                 def render_array_index(write: 'ArrayWrite') -> str:
@@ -431,13 +437,9 @@ def cleanup_post_generation(dumper):
                         dump_type(module_writes[0].idx.dtype),
                     ),
                 )
-
                 dumper.append_code(
-                    f'self.{array_name}_w{port_suffix} = executed_wire & ({aggregated_predicates})'
+                    f'self.{array_name}_widx{port_suffix} = {widx_expr}.as_bits()'
                 )
-
-                dumper.append_code(f'self.{array_name}_wdata{port_suffix} = {wdata_expr}')
-                dumper.append_code(f'self.{array_name}_widx{port_suffix} = {widx_expr}.as_bits()')
 
         module_reads = module_view.reads.get(arr, ())
         if module_reads and arr.index_bits > 0:
@@ -502,8 +504,9 @@ def cleanup_post_generation(dumper):
     )
     for callee, trigger_entries in async_groups.items():
         rval = dumper.dump_rval(callee, False)
+        trigger_width = dumper.module_trigger_widths.get(callee, 8)
         if not trigger_entries:
-            dumper.append_code(f'self.{rval}_trigger = UInt(8)(0)')
+            dumper.append_code(f'self.{rval}_trigger = UInt({trigger_width})(0)')
             continue
 
         callee_ready = f"self.{namify(callee.name)}_trigger_counter_delta_ready"
@@ -531,10 +534,22 @@ def cleanup_post_generation(dumper):
                 )
             )
         dumper.append_code(f'# Summing triggers for {rval}')
-        add_terms = [f"Mux({pred}, UInt(8)(0), UInt(8)(1))" for pred in trigger_predicates]
-        sum_expression = f"reduce(operator.add, [{', '.join(add_terms)}])"
-        resized_sum = f"(({sum_expression}).as_bits()[0:8].as_uint())"
-        final_trigger_value = f"Mux(executed_wire, UInt(8)(0), {resized_sum})"
+        if trigger_width == 1:
+            trigger_expr = _format_reduction_expr(
+                [f"({pred})" for pred in trigger_predicates],
+                default_literal="Bits(1)(0)",
+            )
+            resized_sum = f"({trigger_expr}).as_uint()"
+        else:
+            add_terms = [
+                f"Mux({pred}, UInt({trigger_width})(0), UInt({trigger_width})(1))"
+                for pred in trigger_predicates
+            ]
+            sum_expression = f"reduce(operator.add, [{', '.join(add_terms)}])"
+            resized_sum = f"(({sum_expression}).as_bits()[0:{trigger_width}].as_uint())"
+        final_trigger_value = (
+            f"Mux(executed_wire, UInt({trigger_width})(0), {resized_sum})"
+        )
         dumper.append_code(f'self.{rval}_trigger = {final_trigger_value}')
 
     for fifo_port in module_view.fifo_ports:

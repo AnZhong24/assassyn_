@@ -11,8 +11,6 @@ from .utils import (
     get_sram_info,
 )
 from .schedule import (
-    compute_fifo_depths,
-    compute_trigger_widths,
     group_async_triggers,
     group_fifo_pushes,
 )
@@ -29,11 +27,18 @@ from ...ir.expr.intrinsic import ExternalIntrinsic
 from ...ir.dtype import Record
 from ...utils import namify, unwrap_operand
 from ...ir.const import Const
+from .sizing import compute_fifo_sizing, fifo_depth_log2
+from .array import (
+    logical_write_port_count,
+    physical_write_port_count,
+    write_ports_are_compressed,
+)
 
 if TYPE_CHECKING:
     from .design import CIRCTDumper
 else:
     CIRCTDumper = Any  # type: ignore
+
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
 def generate_top_harness(dumper: CIRCTDumper):
@@ -94,16 +99,17 @@ def generate_top_harness(dumper: CIRCTDumper):
     dumper.append_code('self.global_cycle_count = cycle_count')
 
     default_fifo_depth = getattr(dumper, "default_fifo_depth", 2)
-    module_fifo_depths = compute_fifo_depths(
-        dumper.sys,
-        dumper.module_metadata,
-        default_fifo_depth,
-    )
-    module_trigger_widths = compute_trigger_widths(
-        dumper.sys,
-        module_fifo_depths,
-        default_fifo_depth,
-    )
+    if not getattr(dumper, "module_fifo_depths", None):
+        (
+            dumper.module_fifo_depths,
+            dumper.module_trigger_widths,
+        ) = compute_fifo_sizing(
+            dumper.sys,
+            dumper.module_metadata,
+            default_fifo_depth,
+        )
+    module_fifo_depths = dumper.module_fifo_depths
+    module_trigger_widths = dumper.module_trigger_widths
 
     # --- 1. Wire Declarations (Generic) ---
     dumper.append_code('# --- Wires for FIFOs, Triggers, and Arrays ---')
@@ -137,14 +143,17 @@ def generate_top_harness(dumper: CIRCTDumper):
         index_bits_type = index_bits if index_bits > 0 else 1
         metadata = dumper.array_metadata.metadata_for(arr)
         if metadata is None:
-            num_write_ports = len(arr.get_write_ports())
+            num_write_ports = logical_write_port_count(metadata, arr)
             num_read_ports = 0
         else:
-            num_write_ports = len(metadata.write_ports)
+            num_write_ports = logical_write_port_count(metadata, arr)
             num_read_ports = len(metadata.read_order)
+        physical_num_write_ports = physical_write_port_count(metadata, arr)
+        compress_writes = write_ports_are_compressed(metadata, arr)
         dumper.append_code(
             f'# Multi-port array {arr_name} with '
-            f'{num_write_ports} write ports and {num_read_ports} read ports'
+            f'{num_write_ports} logical/{physical_num_write_ports} physical '
+            f'write ports and {num_read_ports} read ports'
         )
 
         # Declare wires for write ports
@@ -157,6 +166,20 @@ def generate_top_harness(dumper: CIRCTDumper):
             dumper.append_code(
                 f'aw_{arr_name}_widx{port_suffix} = Wire(Bits({index_bits_type}))'
             )
+        if compress_writes:
+            for port_idx in range(physical_num_write_ports):
+                port_suffix = f"_port{port_idx}"
+                dumper.append_code(
+                    f'aw_{arr_name}_phys_w{port_suffix} = Wire(Bits(1))'
+                )
+                dumper.append_code(
+                    f'aw_{arr_name}_phys_wdata{port_suffix} = '
+                    f'Wire({dump_type(arr.scalar_ty)})'
+                )
+                dumper.append_code(
+                    f'aw_{arr_name}_phys_widx{port_suffix} = '
+                    f'Wire(Bits({index_bits_type}))'
+                )
         # Declare wires for read ports
         for port_idx in range(num_read_ports):
             port_suffix = f"_port{port_idx}"
@@ -170,12 +193,17 @@ def generate_top_harness(dumper: CIRCTDumper):
 
         # Instantiate multi-port array
         port_connections = ['clk=self.clk', 'rst=self.rst']
-        for port_idx in range(num_write_ports):
+        for port_idx in range(physical_num_write_ports):
             port_suffix = f"_port{port_idx}"
+            write_prefix = (
+                f"aw_{arr_name}_phys"
+                if compress_writes
+                else f"aw_{arr_name}"
+            )
             port_connections.extend([
-                f'w{port_suffix}=aw_{arr_name}_w{port_suffix}',
-                f'wdata{port_suffix}=aw_{arr_name}_wdata{port_suffix}',
-                f'widx{port_suffix}=aw_{arr_name}_widx{port_suffix}'
+                f'w{port_suffix}={write_prefix}_w{port_suffix}',
+                f'wdata{port_suffix}={write_prefix}_wdata{port_suffix}',
+                f'widx{port_suffix}={write_prefix}_widx{port_suffix}',
             ])
         for port_idx in range(num_read_ports):
             port_suffix = f"_port{port_idx}"
@@ -201,8 +229,10 @@ def generate_top_harness(dumper: CIRCTDumper):
         for port in module.ports:
             fifo_base_name = f'fifo_{namify(module.name)}_{namify(port.name)}'
             depth = depth_map.get(port, default_fifo_depth)
+            depth_log2 = fifo_depth_log2(depth)
             dumper.append_code(
-                f'{fifo_base_name}_inst = FIFO(WIDTH={port.dtype.bits}, DEPTH_LOG2={depth})'
+                f'{fifo_base_name}_inst = FIFO(WIDTH={port.dtype.bits}, '
+                f'DEPTH_LOG2={depth_log2})'
                 f'(clk=self.clk, rst_n=~self.rst, push_valid={fifo_base_name}_push_valid, '
                 f'push_data={fifo_base_name}_push_data, pop_ready={fifo_base_name}_pop_ready)'
             )
@@ -555,6 +585,7 @@ def generate_top_harness(dumper: CIRCTDumper):
     # Copying of external SystemVerilog files occurs during elaboration.
 
     dumper.append_code('system.compile()')
+    dumper.append_code('patch_fifo("sv/hw/Top.sv")')
 
 
 def _top_exposure_entries(dumper: CIRCTDumper) -> list[dict[str, Any]]:

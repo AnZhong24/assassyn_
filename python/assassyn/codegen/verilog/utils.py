@@ -133,5 +133,6 @@ from pycde.dialects import comb,sv
 from functools import reduce
 import operator
 from assassyn.pycde_wrapper import FIFO, TriggerCounter, build_register_file
+from assassyn.utils import patch_fifo
 
 '''

@@ -116,7 +116,8 @@ def generate_module_ports(dumper, node: Module) -> None:
         dtype = fifo_port.dtype
         dumper.append_code(f'{port_prefix}_push_data = Output({dump_type(dtype)})')
     for callee in unique_call_handshake_targets:
-        dumper.append_code(f'{namify(callee.name)}_trigger = Output(UInt(8))')
+        width = dumper.module_trigger_widths.get(callee, 8)
+        dumper.append_code(f'{namify(callee.name)}_trigger = Output(UInt({width}))')
 
     # pylint: disable=too-many-nested-blocks
     for arr_container in dumper.sys.arrays:

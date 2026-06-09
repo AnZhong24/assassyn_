@@ -142,4 +142,90 @@ class ArrayMetadataRegistry:
             return []
         return list(meta.users)
 
-__all__ = ["ArrayMetadataRegistry"]
+
+def _array_attr_value(array: Array, *names: str) -> Any:
+    """Return a Verilog backend attribute value attached to an array."""
+    wanted = set(names)
+    for attr in getattr(array, "attr", ()) or ():
+        if isinstance(attr, dict):
+            for name in wanted:
+                if name in attr:
+                    return attr[name]
+            continue
+        if isinstance(attr, tuple) and len(attr) == 2 and attr[0] in wanted:
+            return attr[1]
+    for name in wanted:
+        if hasattr(array, name):
+            return getattr(array, name)
+    return None
+
+
+def _positive_int_attr(array: Array, *names: str) -> Optional[int]:
+    value = _array_attr_value(array, *names)
+    if value is None:
+        return None
+    value = int(value)
+    if value < 1:
+        raise ValueError(
+            f"Array {array.name} attribute {names[0]} must be >= 1, got {value}"
+        )
+    return value
+
+
+def _bool_attr(array: Array, *names: str) -> bool:
+    """Return a boolean Verilog backend attribute attached to an array."""
+    value = _array_attr_value(array, *names)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def logical_write_port_count(metadata: Optional[ArrayMetadata], array: Array) -> int:
+    """Return the number of module-facing write ports for an array."""
+    if metadata is None:
+        return len(array.get_write_ports())
+    return len(metadata.write_ports)
+
+
+def physical_write_port_count(metadata: Optional[ArrayMetadata], array: Array) -> int:
+    """Return the number of Verilog register-file write ports to instantiate."""
+    logical_count = logical_write_port_count(metadata, array)
+    if logical_count == 0:
+        return 0
+    limit = _positive_int_attr(
+        array,
+        "verilog_write_ports",
+        "max_verilog_write_ports",
+        "max_write_ports",
+    )
+    if limit is None:
+        return logical_count
+    return min(logical_count, limit)
+
+
+def write_ports_are_compressed(metadata: Optional[ArrayMetadata], array: Array) -> bool:
+    """Return whether logical writer ports need Top-level compression."""
+    return physical_write_port_count(metadata, array) < logical_write_port_count(
+        metadata,
+        array,
+    )
+
+
+def synthesis_blackbox_array(array: Array) -> bool:
+    """Return whether synthesis should see only a blackbox wrapper for the array."""
+    return _bool_attr(
+        array,
+        "verilog_synthesis_blackbox",
+        "synthesis_blackbox",
+    )
+
+
+__all__ = [
+    "ArrayMetadataRegistry",
+    "logical_write_port_count",
+    "physical_write_port_count",
+    "synthesis_blackbox_array",
+    "write_ports_are_compressed",
+]

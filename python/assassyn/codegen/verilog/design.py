@@ -33,7 +33,11 @@ from .module import generate_module_ports
 from .system import generate_system
 from .metadata import ExternalRegistry, InteractionMatrix, ModuleMetadata
 from .analysis import collect_external_metadata, collect_fifo_metadata
-from .array import ArrayMetadataRegistry
+from .array import (
+    ArrayMetadataRegistry,
+    physical_write_port_count,
+    write_ports_are_compressed,
+)
 
 
 class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-many-statements
@@ -81,6 +85,8 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-
         self.module_metadata: Dict[Module, ModuleMetadata] = (
             module_metadata if module_metadata is not None else {}
         )
+        self.module_fifo_depths = {}
+        self.module_trigger_widths = {}
         self.interactions = interactions if interactions is not None else InteractionMatrix()
         self.external_metadata = (
             external_metadata if external_metadata is not None else ExternalRegistry()
@@ -266,10 +272,10 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-
 
         metadata = self.array_metadata.metadata_for(array)
         if metadata is None:
-            num_write_ports = len(array.get_write_ports())
+            num_write_ports = physical_write_port_count(metadata, array)
             num_read_ports = 0
         else:
-            num_write_ports = len(metadata.write_ports)
+            num_write_ports = physical_write_port_count(metadata, array)
             num_read_ports = len(metadata.read_order)
 
         class_name = namify(array.name)
@@ -343,6 +349,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-
         read_mapping = metadata.read_ports_by_module
         if not write_mapping and not any(read_mapping.values()):
             return
+        compress_writes = write_ports_are_compressed(metadata, arr)
 
         self.append_code(f'# Connections for array {arr_name}')
 
@@ -370,6 +377,73 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-
                     f'aw_{arr_name}_widx{port_suffix}.assign(Bits(1)(0))'
                 )
 
+        if compress_writes:
+            logical_count = len(write_mapping)
+            physical_count = physical_write_port_count(metadata, arr)
+            if physical_count > 2:
+                raise NotImplementedError(
+                    "Verilog array write-port compression currently supports "
+                    f"one or two physical ports, got {physical_count} for {arr.name}"
+                )
+            data_default = f"{dump_type(arr.scalar_ty)}(0)"
+            idx_default = f"Bits({arr.index_bits if arr.index_bits > 0 else 1})(0)"
+
+            def reduce_or(terms):
+                terms = list(terms)
+                if not terms:
+                    return "Bits(1)(0)"
+                if len(terms) == 1:
+                    return terms[0]
+                return f"reduce(operator.or_, [{', '.join(terms)}])"
+
+            def select_expr(kind: str, rank: int) -> str:
+                default = data_default if kind == "wdata" else idx_default
+                expr = default
+                for idx in range(logical_count - 1, -1, -1):
+                    if rank == 0:
+                        predicate = f"aw_{arr_name}_w_port{idx}"
+                    else:
+                        if idx == 0:
+                            continue
+                        lower_active = reduce_or(
+                            f"aw_{arr_name}_w_port{lower_idx}"
+                            for lower_idx in range(idx)
+                        )
+                        predicate = (
+                            f"(aw_{arr_name}_w_port{idx} & ({lower_active}))"
+                        )
+                    expr = f"Mux({predicate}, {expr}, aw_{arr_name}_{kind}_port{idx})"
+                return expr
+
+            for port_idx in range(physical_count):
+                if port_idx == 0:
+                    valid_expr = reduce_or(
+                        f"aw_{arr_name}_w_port{idx}"
+                        for idx in range(logical_count)
+                    )
+                else:
+                    valid_terms = []
+                    for idx in range(1, logical_count):
+                        lower_active = reduce_or(
+                            f"aw_{arr_name}_w_port{lower_idx}"
+                            for lower_idx in range(idx)
+                        )
+                        valid_terms.append(
+                            f"(aw_{arr_name}_w_port{idx} & ({lower_active}))"
+                        )
+                    valid_expr = reduce_or(valid_terms)
+                self.append_code(
+                    f"aw_{arr_name}_phys_w_port{port_idx}.assign({valid_expr})"
+                )
+                self.append_code(
+                    f"aw_{arr_name}_phys_wdata_port{port_idx}.assign("
+                    f"{select_expr('wdata', port_idx)})"
+                )
+                self.append_code(
+                    f"aw_{arr_name}_phys_widx_port{port_idx}.assign("
+                    f"{select_expr('widx', port_idx)})"
+                )
+
         # Connect read address signals from modules into the array writer.
         if arr.index_bits > 0:
             for module, port_indices in read_mapping.items():
@@ -382,6 +456,7 @@ class CIRCTDumper(Visitor):  # pylint: disable=too-many-instance-attributes,too-
                     )
 
 
+# pylint: disable-next=too-many-locals
 @enforce_type
 def generate_design(
     fname: Union[str, Path],

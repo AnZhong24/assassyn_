@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from ...ir.memory.base import MemoryBase
 from ...builder import SysBuilder
 from ...utils import enforce_type
+from .sizing import compute_fifo_sizing
 
 if TYPE_CHECKING:
     from .design import CIRCTDumper
@@ -35,6 +36,14 @@ def generate_system(dumper: CIRCTDumper, node: SysBuilder):
         dumper._generate_external_module_wrapper(ext_class)
 
     dumper.array_metadata.collect(sys)
+    (
+        dumper.module_fifo_depths,
+        dumper.module_trigger_widths,
+    ) = compute_fifo_sizing(
+        sys,
+        dumper.module_metadata,
+        getattr(dumper, "default_fifo_depth", 1),
+    )
 
     for arr_container in sys.arrays:
         owner = arr_container.owner
